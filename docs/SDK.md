@@ -1,6 +1,6 @@
 # SDK reference — UNOFFICIAL community contract
 
-Package: `@knowlet/nemoclaw-harness-sdk@0.1.0`. ESM only; TypeScript declarations ship with the package. This is not an NVIDIA SDK, and this package is not claimed to be published to npm. Install its `npm pack` tarball as described in the [README](../README.md).
+Package: `@knowlet/nemoclaw-harness-sdk@0.2.0`. ESM only; TypeScript declarations ship with the package. This is not an NVIDIA SDK, and this package is not claimed to be published to npm. Install its `npm pack` tarball as described in the [README](../README.md).
 
 ## Adapter schema
 
@@ -102,3 +102,7 @@ Development exceptions are limited to HTTP loopback hostnames with the `/v1` pat
 Relevant codes include `INVALID_MANIFEST`, `UNTRUSTED_CONFIG`, `INVALID_TASK`, `SPAWN_FAILED`, `PROCESS_FAILED`, `TIMEOUT`, `ABORTED`, `OUTPUT_LIMIT`, `INVALID_ENDPOINT`, `INVALID_PARAMETERS`, `HTTP_ERROR`, `RESPONSE_LIMIT`, `INVALID_RESPONSE`, `TRANSPORT_FAILED`, and `UNPINNED_IMAGE`.
 
 This is a `0.x` community SDK with an explicitly alpha adapter schema. Pin the package version. Unknown schema versions fail closed; automatic migration is not implemented. Upstream NemoClaw/OpenShell/DeepSeek compatibility is separately recorded in [architecture](ARCHITECTURE.md), not guaranteed by our package version.
+
+## Testing API
+
+Version 0.2.0 adds the `/testing` entry point and `nha test`. See [Harness test kit](TESTING.md) for versioned cases, framework bridges, JSON/JUnit output, and limitations.

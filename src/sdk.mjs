@@ -5,7 +5,7 @@ import { constants } from 'node:fs';
 import { lstat, open, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';
 export const API_VERSION = 'harness-adapter.knowlet.dev/v1alpha1';
 export const INFERENCE_URL = 'https://inference.local/v1';
 export const PLACEHOLDER_TOKEN = 'openshell';

@@ -21,6 +21,7 @@ npm run demo
 node bin/nha.mjs init ./my-harness --name my-harness
 cd my-harness
 npm run validate
+npm test
 printf 'hello' | node agent.mjs
 ```
 
@@ -30,12 +31,12 @@ printf 'hello' | node agent.mjs
 
 ## SDK 安裝
 
-套件名稱為 `@knowlet/nemoclaw-harness-sdk`，版本 `0.1.0`；**本專案不宣稱已發布到 npm registry**。
+套件名稱為 `@knowlet/nemoclaw-harness-sdk`，版本 `0.2.0`；**本專案不宣稱已發布到 npm registry**。
 
 ```bash
-npm pack
-# 在另一個專案內使用實際產出的檔案路徑：
-npm install /absolute/path/knowlet-nemoclaw-harness-sdk-0.1.0.tgz
+npm run pack:sdk
+# 使用固定且不含維護者名稱的檔名：
+npm install ./dist/harness-sdk.tgz
 ```
 
 ```js
@@ -50,6 +51,17 @@ const adapter = defineAdapter(input);
 const result = await runHarness(adapter, '檢查 workspace');
 console.log(result.stdout);
 ```
+
+## Harness 測試套件
+
+產生的專案附 `test/suite.json` 與 `test/harness.test.mjs`，執行 `npm test` 即可測試；換成你的 harness 指令與案例後可直接重用。SDK 的 `/testing` 提供 `runSuite`、`defineSuite`、`toJUnit` 及 loopback 模型 API fixture；JSON／JUnit 報告不包含 task 或輸出本文。
+
+```bash
+node bin/nha.mjs test test/suite.json --adapter adapter.local.json \
+  --allow-host --json result.json --junit result.xml
+```
+
+`adapter.local.json` 需指向你本機已安裝的程式；`--allow-host` 不建立沙箱。受管理執行及其他框架橋接請見[測試套件文件](docs/TESTING.md)。[獨立部署 workflow](.github/workflows/runtime-integration.yml) 會編譯真實 NemoClaw、建立 Docker sandbox，部署失敗不會被 SDK 單元測試掩蓋。
 
 ## 模型介面與安全邊界
 

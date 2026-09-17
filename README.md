@@ -21,6 +21,7 @@ npm run demo
 node bin/nha.mjs init ./my-harness --name my-harness
 cd my-harness
 npm run validate
+npm test
 printf 'hello' | node agent.mjs
 ```
 
@@ -44,12 +45,12 @@ my-harness/
 
 ## Install the SDK in another project
 
-The package name is **`@knowlet/nemoclaw-harness-sdk`**, version `0.1.0`. **No npm registry publication is implied.** Build the installable tarball from this checkout:
+The package name is **`@knowlet/nemoclaw-harness-sdk`**, version `0.2.0`. **No npm registry publication is implied.** Build the installable tarball from this checkout:
 
 ```bash
-npm pack
-# In your application, install the actual tarball path:
-npm install /absolute/path/knowlet-nemoclaw-harness-sdk-0.1.0.tgz
+npm run pack:sdk
+# Install from this checkout using a stable, neutral filename:
+npm install ./dist/harness-sdk.tgz
 ```
 
 The tarball includes the CLI, templates, examples, declarations, and notices. CI tests an offline install in an empty consumer and then scaffolds another working project from the installed CLI.
@@ -68,6 +69,17 @@ console.log(result.stdout);
 ```
 
 No source-language rewrite is required. A Python equivalent uses `['/usr/bin/python3', '/opt/my-harness/agent.py']`; install the runtime and dependencies in the image at build time. The SDK does not download or install them on first launch.
+
+## Reusable harness test suite
+
+Generated projects include `test/suite.json` and `test/harness.test.mjs`; run `npm test`, then replace the command and case oracles for your framework. The SDK exports `runSuite`, `defineSuite`, `toJUnit`, and a loopback inference fixture through `/testing`. JSON/JUnit reports omit task/output bodies.
+
+```bash
+node bin/nha.mjs test test/suite.json --adapter adapter.local.json \
+  --allow-host --json result.json --junit result.xml
+```
+
+The adapter must point to an existing local executable; `--allow-host` is explicit, unsandboxed execution. See [test-kit guide](docs/TESTING.md) for managed execution and custom framework bridges. Actual NemoClaw/Docker deployment has a separate [runtime workflow](.github/workflows/runtime-integration.yml), not a mocked CLI. Its passed/failed outcomes are recorded separately from SDK tests.
 
 ## Managed inference
 
@@ -129,7 +141,7 @@ npm run doctor       # Reports local tools; does not claim a sandbox is qualifie
 tsc --noEmit --strict --module NodeNext --moduleResolution NodeNext --target ES2022 test/types.mts
 ```
 
-The dependency-free linter checks syntax, JSON, whitespace, relative documentation links, and unofficial notices; it is not ESLint. The GitHub workflow pins action revisions and checks Node 22.16 and Node 24. See [validation record](docs/VALIDATION.md) for what was actually executed at initial delivery.
+The dependency-free linter checks syntax, JSON, whitespace, relative documentation links, and unofficial notices; it is not ESLint. The GitHub workflow pins action revisions and checks Node 22.16 and Node 24. See [validation record](docs/VALIDATION.md) for actual execution evidence and remaining limitations.
 
 ## License and names
 

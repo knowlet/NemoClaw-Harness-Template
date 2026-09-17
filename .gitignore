@@ -6,3 +6,5 @@ coverage/
 !.env.example
 dist/
 .nha-init-*/
+.upstream/
+reports/

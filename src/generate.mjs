@@ -40,7 +40,7 @@ export async function scaffold(destination, { name = 'my-harness', model = 'mana
     const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
     pkg.name = name;
     pkg.description = `UNOFFICIAL ${name} harness scaffold based on knowlet's independent adapter SDK`;
-    pkg.scripts = { demo: 'node bin/nha.mjs demo', validate: 'node bin/nha.mjs validate adapter.json', doctor: 'node bin/nha.mjs doctor' };
+    pkg.scripts = { demo: 'node bin/nha.mjs demo', validate: 'node bin/nha.mjs validate adapter.json', doctor: 'node bin/nha.mjs doctor', test: 'node --test test/*.test.mjs' };
     delete pkg.repository;
     await writeFile(path.join(temp, 'package.json'), `${JSON.stringify(pkg, null, 2)}\n`);
     const lock = { name, version: pkg.version, lockfileVersion: 3, requires: true, packages: { '': { name, version: pkg.version, license: pkg.license, bin: pkg.bin, engines: pkg.engines } } };
@@ -49,8 +49,35 @@ export async function scaffold(destination, { name = 'my-harness', model = 'mana
     await writeFile(path.join(temp, 'policy.yaml'), renderPolicy(adapter));
     await writeFile(path.join(temp, 'Dockerfile'), renderDockerfile(adapter));
     await cp(path.join(root, 'examples/echo/agent.mjs'), path.join(temp, 'agent.mjs'));
+    await mkdir(path.join(temp, 'test'));
+    const suite = { version: 'harness-suite/v1', name: 'starter-harness', cases: [
+      { name: 'basic task', task: 'hello', expect: { stdout: 'Echo: hello\n' } },
+      { name: 'Unicode', task: '繁體中文 🦖', expect: { stdout: 'Echo: 繁體中文 🦖\n' } },
+      { name: 'literal shell input', task: '$(echo NOT_EXECUTED); \'single\' "double"', expect: { stdout: 'Echo: $(echo NOT_EXECUTED); \'single\' "double"\n' } },
+    ] };
+    await writeFile(path.join(temp, 'test/suite.json'), JSON.stringify(suite, null, 2) + '\n');
+    await writeFile(path.join(temp, 'test/harness.test.mjs'), `// UNOFFICIAL local contract test. Replace the command and cases when adapting a real harness.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile, mkdtemp, rm } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import os from 'node:os';
+import path from 'node:path';
+import { runSuite } from '../src/index.mjs';
+test('harness contract', async () => {
+  const adapter = JSON.parse(await readFile(new URL('../adapter.json', import.meta.url), 'utf8'));
+  adapter.runtime.command = [process.execPath, fileURLToPath(new URL('../agent.mjs', import.meta.url))];
+  const suite = JSON.parse(await readFile(new URL('./suite.json', import.meta.url), 'utf8'));
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'harness-contract-'));
+  try {
+    const report = await runSuite(suite, { adapter, cwd: tmp, home: tmp });
+    assert.equal(report.ok, true, JSON.stringify(report));
+  } finally { await rm(tmp, { recursive: true, force: true }); }
+});
+`);
+
     await writeFile(path.join(temp, '.dockerignore'), '.git\nnode_modules\n.env*\n*.tgz\n*.log\n');
-    await writeFile(path.join(temp, 'README.md'), `# ${name} — UNOFFICIAL\n\n${NOTICE}\n\nThe starter agent echoes stdin; it is NOT an LLM. Replace agent.mjs or adapter.json runtime.command with your reviewed harness.\n\nTry locally: \`printf 'hello' | node agent.mjs\`. This has no sandbox.\n\nValidate: \`node bin/nha.mjs validate adapter.json\`.\n\nBuild a development image: \`docker build --build-arg BASE_IMAGE=node:24-bookworm-slim -t ${name}:dev .\`. Tags and apt packages are mutable; release builds require reviewed image digests and package provenance.\n\nGenerate an explicit launch plan: \`node bin/nha.mjs plan --name ${name} --image ${name}:dev --dev-image --policy policy.yaml --task hello\`. The gateway and any inference route must already exist.\n\nThe state classification is descriptive; this SDK does not implement NemoClaw snapshots or registration.\n`);
+    await writeFile(path.join(temp, 'README.md'), `# ${name} — UNOFFICIAL\n\n${NOTICE}\n\nThe starter agent echoes stdin; it is NOT an LLM. Replace agent.mjs or adapter.json runtime.command with your reviewed harness.\n\nTry locally: \`printf 'hello' | node agent.mjs\`. This has no sandbox.\n\nValidate: \`node bin/nha.mjs validate adapter.json\`. Run \`npm test\` for the generated harness contract suite; edit test/suite.json and test/harness.test.mjs to adapt it.\n\nBuild a development image: \`docker build --build-arg BASE_IMAGE=node:24-bookworm-slim -t ${name}:dev .\`. Tags and apt packages are mutable; release builds require reviewed image digests and package provenance.\n\nGenerate an explicit launch plan: \`node bin/nha.mjs plan --name ${name} --image ${name}:dev --dev-image --policy policy.yaml --task hello\`. The gateway and any inference route must already exist.\n\nThe state classification is descriptive; this SDK does not implement NemoClaw snapshots or registration.\n`);
     // mkdir is the final exclusive claim; rename alone could replace an empty directory.
     await mkdir(output);
     // Node 24 refuses an existing destination directory with errorOnExist.

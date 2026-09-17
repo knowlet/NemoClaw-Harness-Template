@@ -22,9 +22,10 @@ function parse(args) {
   return { positional, flags };
 }
 function help() {
-  console.log(`${NOTICE}\n\nUsage: nha <command>\n  demo                              Run a deterministic local echo (no sandbox/LLM)\n  init <directory> [--name NAME] [--model MODEL]\n  validate <adapter.json>\n  render <adapter.json> --output NEW_DIRECTORY\n  exec <adapter.json> (--managed | --allow-host) (--task TEXT | --task-file FILE)\n  plan --name NAME --image IMAGE --policy FILE --task TEXT [--dev-image]\n  launch <same arguments as plan>    Explicitly execute the OpenShell BYOC command\n  doctor                            Check local prerequisites; no changes\n  --version\n\nThis SDK does not register agents with official NemoClaw onboarding.\n`);
+  console.log(`${NOTICE}\n\nUsage: nha <command>\n  demo                              Run a deterministic local echo (no sandbox/LLM)\n  init <directory> [--name NAME] [--model MODEL]\n  validate <adapter.json>\n  render <adapter.json> --output NEW_DIRECTORY\n  exec <adapter.json> (--managed | --allow-host) (--task TEXT | --task-file FILE)\n  plan --name NAME --image IMAGE --policy FILE --task TEXT [--dev-image]\n  launch <same arguments as plan>    Explicitly execute the OpenShell BYOC command\n  test <suite.json> --adapter FILE (--allow-host | --managed) [--json FILE] [--junit FILE]\n  doctor                            Check local prerequisites; no changes\n  --version\n\nThis SDK does not register agents with official NemoClaw onboarding.\n`);
 }
 async function main() {
+  if (process.argv[2] === 'test') { const { testCommand } = await import('./test.mjs'); return testCommand(process.argv.slice(3)); }
   const { positional, flags } = parse(process.argv.slice(2));
   const [command, filename] = positional;
   if (flags.version) { console.log(`nha ${VERSION} — ${NOTICE}`); return; }
@@ -41,7 +42,7 @@ async function main() {
     return;
   }
   if (command === 'doctor') {
-    const binaries = Object.fromEntries(['openshell', 'docker', 'podman', 'nerdctl'].map((bin) => {
+    const binaries = Object.fromEntries(['nemoclaw', 'openshell', 'docker', 'podman', 'nerdctl'].map((bin) => {
       const result = spawnSync(bin, ['--version'], { encoding: 'utf8', timeout: 5000 });
       return [bin, { available: !result.error && result.status === 0, version: result.status === 0 ? result.stdout.trim().split('\n')[0] : null }];
     }));

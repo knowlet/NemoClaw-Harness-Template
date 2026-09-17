@@ -6,7 +6,7 @@ const root = process.cwd();
 let checked = 0;
 async function walk(dir) {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
-    if (['.git', 'node_modules', 'dist', 'coverage'].includes(entry.name)) continue;
+    if (['.git', 'node_modules', 'dist', 'coverage', '.upstream', 'reports'].includes(entry.name)) continue;
     const file = path.join(dir, entry.name);
     if (entry.isDirectory()) { await walk(file); continue; }
     if (!/\.(mjs|mts|ts|json|md|yml|yaml)$/.test(file)) continue;
@@ -17,6 +17,7 @@ async function walk(dir) {
       const result = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' });
       if (result.status !== 0) throw new Error(result.stderr);
     }
+    if (/^README.*\.md$/.test(entry.name) && /knowlet-nemoclaw-harness/.test(text)) throw new Error(`Maintainer-prefixed artifact path in README: ${file}`);
     if (file.endsWith('.md')) {
       for (const match of text.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
         const link = match[1].split('#')[0];

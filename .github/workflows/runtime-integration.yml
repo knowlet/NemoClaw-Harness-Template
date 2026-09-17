@@ -26,6 +26,7 @@ jobs:
           path: .upstream/NemoClaw
           persist-credentials: false
       - name: Build actual NemoClaw CLI from pinned upstream source
+        id: cli
         working-directory: .upstream/NemoClaw
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
@@ -33,8 +34,9 @@ jobs:
           npm run build:cli
           node bin/nemoclaw.js --version
       - name: Install OpenShell v0.0.116 and verify checksum
+        id: openshell
         run: |
-          mkdir -p "$RUNNER_TEMP/openshell" "$HOME/.local/bin"
+          mkdir -p "$RUNNER_TEMP/openshell" "$HOME/.local/bin" reports
           cd "$RUNNER_TEMP/openshell"
           base=https://github.com/NVIDIA/OpenShell/releases/download/v0.0.116
           curl -fsSLO "$base/openshell-x86_64-unknown-linux-musl.tar.gz"
@@ -44,31 +46,72 @@ jobs:
           install -m 0755 "$(find . -type f -name openshell | head -1)" "$HOME/.local/bin/openshell"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/openshell" --version
-      - name: Actual NemoClaw onboarding with deterministic fixture provider
+      - name: Actual NemoClaw onboarding with fixture provider
+        id: onboard
+        continue-on-error: true
         env:
           NEMOCLAW_PROVIDER: custom
-          NEMOCLAW_ENDPOINT_URL: http://127.0.0.1:18080/v1
           NEMOCLAW_MODEL: fixture-model
           NEMOCLAW_PROVIDER_KEY: fixture-only-not-a-secret
         run: |
-          set -o pipefail
           node scripts/integration/fixture-provider.mjs > "$RUNNER_TEMP/provider.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/provider.pid"
-          curl --retry 10 --retry-connrefused --retry-delay 1 --fail http://127.0.0.1:18080/v1/models
-          timeout 600 node .upstream/NemoClaw/bin/nemoclaw.js onboard --name nha-host --agent openclaw --no-gpu --no-sandbox-gpu --non-interactive --yes --yes-i-accept-third-party-software 2>&1 | tee "$RUNNER_TEMP/onboard.log"
-      - name: Build generated adapter image and launch an actual sandbox
+          host_ip=$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')
+          export NEMOCLAW_ENDPOINT_URL="http://$host_ip:18080/v1"
+          curl --retry 10 --retry-connrefused --retry-delay 1 --fail "$NEMOCLAW_ENDPOINT_URL/models"
+          set +e
+          timeout 900 node .upstream/NemoClaw/bin/nemoclaw.js onboard --name nha-host --agent openclaw --no-gpu --no-sandbox-gpu --non-interactive --yes --yes-i-accept-third-party-software > "$RUNNER_TEMP/onboard.log" 2>&1
+          rc=$?
+          echo "Actual NemoClaw onboarding exit code: $rc"
+          if [ "$rc" != 0 ]; then tail -n 30 "$RUNNER_TEMP/onboard.log"; fi
+          exit "$rc"
+      - name: Build generated adapter and test real OpenShell BYOC
+        id: byoc
+        if: ${{ !cancelled() && steps.openshell.outcome == 'success' }}
+        continue-on-error: true
         run: |
           set -o pipefail
           node bin/nha.mjs init "$RUNNER_TEMP/harness" --name integration-echo
-          docker build --build-arg BASE_IMAGE=node:24-bookworm-slim -t nha-integration:dev "$RUNNER_TEMP/harness"
+          cp scripts/integration/sandbox-smoke.mjs "$RUNNER_TEMP/harness/integration-smoke.mjs"
+          printf '\nUSER root\nRUN mkdir /policy-probe && chmod 0777 /policy-probe && echo test-only > /policy-probe/readable.txt && chmod 0644 /policy-probe/readable.txt\nUSER 1000:1000\n' >> "$RUNNER_TEMP/harness/Dockerfile"
+          docker build --build-arg BASE_IMAGE=node:24-bookworm-slim -t nha-integration:dev "$RUNNER_TEMP/harness" > "$RUNNER_TEMP/build.log" 2>&1 || { tail -n 25 "$RUNNER_TEMP/build.log"; exit 1; }
+          docker image inspect nha-integration:dev --format '{{.Id}}' > reports/image-id.txt
           timeout 180 node bin/nha.mjs launch --name nha-integration --image nha-integration:dev --dev-image --policy "$RUNNER_TEMP/harness/policy.yaml" --task NHA_LIVE_OK | tee "$RUNNER_TEMP/live.txt"
           grep -F 'Echo: NHA_LIVE_OK' "$RUNNER_TEMP/live.txt"
-      - name: Inspect real NemoClaw state and invoke adapter inside its sandbox
+          openshell sandbox exec -n nha-integration -- node /opt/nha/integration-smoke.mjs byoc | tee reports/byoc.json
+      - name: Run harness suite inside the actual NemoClaw-managed sandbox
+        id: embedded
+        if: ${{ !cancelled() && steps.openshell.outcome == 'success' }}
+        continue-on-error: true
         run: |
           set -o pipefail
           node .upstream/NemoClaw/bin/nemoclaw.js list
-          node .upstream/NemoClaw/bin/nemoclaw.js nha-host upload "$RUNNER_TEMP/harness" /sandbox/harness
-          node .upstream/NemoClaw/bin/nemoclaw.js nha-host exec -- node /sandbox/harness/agent.mjs < /dev/null
+          tar -C "$RUNNER_TEMP" -cf "$RUNNER_TEMP/harness.tar" harness
+          node .upstream/NemoClaw/bin/nemoclaw.js nha-host upload "$RUNNER_TEMP/harness.tar" /sandbox/harness.tar
+          node .upstream/NemoClaw/bin/nemoclaw.js nha-host exec -- tar -xf /sandbox/harness.tar -C /sandbox
+          node .upstream/NemoClaw/bin/nemoclaw.js nha-host exec -- node /sandbox/harness/integration-smoke.mjs embedded | tee reports/nemoclaw.json
+      - name: Record outcomes without hiding deployment failures
+        if: always()
+        env:
+          CLI_RESULT: ${{ steps.cli.outcome }}
+          ONBOARD_RESULT: ${{ steps.onboard.outcome }}
+          BYOC_RESULT: ${{ steps.byoc.outcome }}
+          EMBEDDED_RESULT: ${{ steps.embedded.outcome }}
+        run: |
+          mkdir -p reports
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const results = Object.fromEntries(["CLI", "ONBOARD", "BYOC", "EMBEDDED"].map(k => [k.toLowerCase(), process.env[k + "_RESULT"]]));
+            const report = { unofficial: true, commit: process.env.GITHUB_SHA, nemoclawCommit: "1eb370f20530bd1312ac86a27782ef8501b28ade", openshell: "0.0.116", arch: process.arch, realModel: false, results };
+            fs.writeFileSync("reports/deployment.json", JSON.stringify(report, null, 2) + "\n");
+            console.log(JSON.stringify(report));
+          '
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: runtime-evidence
+          path: reports/
+          retention-days: 14
       - name: Cleanup disposable sandboxes
         if: always()
         run: |
@@ -78,3 +121,10 @@ jobs:
             openshell sandbox delete nha-host || true
           fi
           if test -f "$RUNNER_TEMP/provider.pid"; then kill "$(cat "$RUNNER_TEMP/provider.pid")" || true; fi
+      - name: Require all deployment checks to pass
+        if: always()
+        env:
+          ONBOARD_RESULT: ${{ steps.onboard.outcome }}
+          BYOC_RESULT: ${{ steps.byoc.outcome }}
+          EMBEDDED_RESULT: ${{ steps.embedded.outcome }}
+        run: test "$ONBOARD_RESULT/$BYOC_RESULT/$EMBEDDED_RESULT" = success/success/success

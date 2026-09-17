@@ -1,21 +1,35 @@
-# Initial validation record — UNOFFICIAL
+# Validation record — UNOFFICIAL
 
-Date: 2026-09-17. This records SDK validation, not NVIDIA/OpenShell/DeepSeek qualification.
+Date: 2026-09-17. Evidence is scoped to the exact check, not NVIDIA certification.
 
-Local environment: Linux x86_64, Node.js 22.16.0, npm 10.9.2. No Docker, Podman, nerdctl, OpenShell gateway, provider credentials, or live model was available. Network-independent tests use local processes and loopback HTTP fixtures.
+## SDK v0.2.0
 
-Actual local results:
+Local environment: Linux x86_64, Node 22.16.0, npm 10.9.2.
 
-| Check | Result |
+| Check | Actual result |
 | --- | --- |
-| `npm run lint` | Passed: 24 source/doc files checked |
-| `npm test` | **60 passed, 0 failed, 0 skipped** |
-| `npm run test:package` | Passed: pack, clean offline install, ESM import, CLI demo, installed scaffold, offline npm ci, validate/demo |
-| TypeScript 5.8.3 strict declaration check | Passed |
-| `nha doctor` | Correctly reported no local container/OpenShell tools and `liveSandboxVerified: false` |
+| `npm run check` | Passed, including lint, **82 tests (0 failed, 0 skipped)**, and packed installation |
+| TypeScript strict declarations, including `/testing` | Passed |
+| Packed clean offline install | Passed: ESM root and `/testing` imports, CLI, scaffold, generated offline install and `npm test` |
+| Neutral SDK artifact path | `npm run pack:sdk` writes `dist/harness-sdk.tgz`; README lint rejects maintainer-prefixed artifact paths |
 
- The GitHub workflow is separate: a committed workflow is not evidence that its jobs have passed. Consult the actual Actions run for the delivered commit.
+Tests cover versioned manifests/suites, process argv/stdin, output limits, timeout/cancellation, expected-error oracles, sanitized JSON/JUnit reports, real loopback HTTP fixtures with tool calls, and exclusive report/scaffold writes. These are not isolation attestation.
 
-Covered checks: manifest rejection and immutability, process argv/stdin handling, environment filtering, deadline/cancellation/output bounds, error-body suppression, endpoint restrictions, Chat Completions wire format, redirect refusal, response streaming limits, source scaffold, packed offline install, installed CLI scaffold, and TypeScript declarations.
+## Actual runtime attempts
 
-Not executed: OCI builds, live managed inference, OpenShell filesystem/egress denial tests, DeepSeek configuration boot, native dependencies, GPU inference, AMD64/ARM64 runtime qualification, or official NemoClaw onboarding/lifecycle/recovery.
+The local container has no Docker daemon, so deployment is executed on a real GitHub-hosted Ubuntu 24.04 Docker runner. The workflow builds NVIDIA/NemoClaw source at `1eb370f20530bd1312ac86a27782ef8501b28ade` and uses checksum-verified OpenShell `v0.0.116`.
+
+The upstream model is a **deterministic HTTP fixture**, not an LLM. No production provider key is used. The real components are the NemoClaw CLI, OpenShell gateway/supervisor, Docker engine, images, sandbox, and network/policy machinery.
+
+| Run | Actual result |
+| --- | --- |
+| [35187333111](https://github.com/knowlet/NemoClaw-Harness-Template/actions/runs/35187333111) | Real CLI build and OpenShell install passed; deployment failed because `gateway start` is not supported by the pinned CLI |
+| [35187691124](https://github.com/knowlet/NemoClaw-Harness-Template/actions/runs/35187691124) | NemoClaw started a real gateway, built an OpenClaw image, created a Ready sandbox, and started its agent gateway. Onboarding then **failed** its managed inference smoke with HTTP 503; later integration steps were skipped |
+
+The latter run used a loopback host fixture URL. The revised workflow uses the Docker bridge host address and records onboarding, BYOC, and execution inside the actual NemoClaw sandbox independently. A committed workflow is not evidence that it passed. `continue-on-error` permits independent diagnostics only; the final job requires all three checks to pass.
+
+Each new run uploads `runtime-evidence` with exact commit/version metadata and check outcomes. Consult the actual run before claiming a successful deployment. See [runtime workflow](../.github/workflows/runtime-integration.yml).
+
+## Limits
+
+No real-model quality benchmark, DeepSeek runtime boot, dual-architecture qualification, GPU inference, or lifecycle/snapshot/restore test is claimed. Execution of the generic adapter inside an existing NemoClaw-managed OpenClaw sandbox is not first-class registration of an arbitrary agent in NemoClaw onboarding. Filesystem and egress security are established only for explicit assertions that actually passed, not by an SDK status flag.

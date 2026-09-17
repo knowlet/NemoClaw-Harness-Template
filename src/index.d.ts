@@ -1,5 +1,5 @@
 /** UNOFFICIAL community contract. Not an NVIDIA SDK or stable upstream manifest. */
-export declare const VERSION: '0.1.0';
+export declare const VERSION: '0.2.0';
 export declare const API_VERSION: 'harness-adapter.knowlet.dev/v1alpha1';
 export declare const INFERENCE_URL: 'https://inference.local/v1';
 export declare const PLACEHOLDER_TOKEN: 'openshell';
@@ -87,3 +87,4 @@ export declare function renderDockerfile(adapter: AdapterManifest): string;
 /** Experimental DeepSeek patch; inspect against the exact upstream source before deployment. */
 export declare function renderDeepSeekPatch(adapter: AdapterManifest): string;
 export declare function scaffold(destination: string, options?: { name?: string; model?: string }): Promise<{ directory: string; adapter: Readonly<AdapterManifest> }>;
+export * from './testing.js';

@@ -25,4 +25,4 @@ jobs:
       - name: Check bundled TypeScript declarations
         run: npm exec --yes --package=typescript@5.8.3 -- tsc --noEmit --strict --module NodeNext --moduleResolution NodeNext --target ES2022 test/types.mts
       - name: Build SDK tarball (no registry publication)
-        run: npm pack --ignore-scripts
+        run: npm run pack:sdk

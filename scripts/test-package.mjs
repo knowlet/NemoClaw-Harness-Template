@@ -13,6 +13,7 @@ try {
   await writeFile(path.join(consumer, 'package.json'), '{"name":"clean-consumer","private":true,"type":"module"}\n');
   run(npm, ['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund', path.join(temp, packed.filename)], consumer);
   assert.match(run(process.execPath, ['--input-type=module', '-e', "import {createAdapter} from '@knowlet/nemoclaw-harness-sdk'; console.log(createAdapter('consumer').metadata.unofficial)"], consumer), /true/);
+  assert.match(run(process.execPath, ['--input-type=module', '-e', "import {SUITE_VERSION} from '@knowlet/nemoclaw-harness-sdk/testing'; console.log(SUITE_VERSION)"], consumer), /harness-suite\/v1/);
   const cli = path.join(consumer, 'node_modules/@knowlet/nemoclaw-harness-sdk/bin/nha.mjs');
   assert.match(run(process.execPath, [cli, 'demo'], consumer), /Echo: Hello, harness!/);
   const generated = path.join(temp, 'generated');
@@ -20,9 +21,10 @@ try {
   run(npm, ['ci', '--offline', '--ignore-scripts', '--no-audit', '--no-fund'], generated);
   assert.match(run(process.execPath, ['bin/nha.mjs', 'validate', 'adapter.json'], generated), /valid/);
   assert.match(run(process.execPath, ['bin/nha.mjs', 'demo'], generated), /Echo: Hello, harness!/);
+  assert.match(run(npm, ['test'], generated), /harness contract/);
   const lock = JSON.parse(await readFile(path.join(generated, 'package-lock.json'), 'utf8'));
   assert.equal(lock.name, 'packed-harness');
   assert.ok(packed.files.some((file) => file.path === 'src/index.d.ts'));
   assert.ok(packed.files.some((file) => file.path === 'NOTICE'));
-  console.log('Package smoke passed: pack -> offline install -> ESM import -> CLI demo -> scaffold -> offline npm ci -> validate/demo');
+  console.log('Package smoke passed: pack -> offline install -> ESM import -> CLI demo -> scaffold -> offline npm ci -> validate/demo/harness suite');
 } finally { await rm(temp, { recursive: true, force: true }); }
