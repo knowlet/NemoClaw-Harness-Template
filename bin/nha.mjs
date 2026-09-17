@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { AdapterError, VERSION, NOTICE, createAdapter, loadAdapter, assertManagedFile, runHarness, buildOpenShellCommand, scaffold, renderPolicy, renderDockerfile, renderDeepSeekPatch } from '../src/index.mjs';
+import { AdapterError, VERSION, NOTICE, createAdapter, loadAdapter, assertManagedFile, runHarness, buildOpenShellPlan, launchOpenShell, scaffold, renderPolicy, renderDockerfile, renderDeepSeekPatch } from '../src/index.mjs';
 
 function parse(args) {
   const positional = [], flags = {};
@@ -55,16 +55,17 @@ async function main() {
     return;
   }
   if (command === 'plan' || command === 'launch') {
-    const argv = buildOpenShellCommand({ name: flags.name, image: flags.image, policy: flags.policy, task: flags.task, allowMutableImage: flags['dev-image'] === true });
+    const options = { name: flags.name, image: flags.image, policy: flags.policy, task: flags.task, allowMutableImage: flags['dev-image'] === true };
+    const commands = buildOpenShellPlan(options);
     if (command === 'plan') {
-      console.log(JSON.stringify({ notice: NOTICE, integration: 'OpenShell BYOC, not registered NemoClaw runtime', developmentImage: flags['dev-image'] === true, argv, prerequisites: ['Compatible OpenShell gateway', 'Image available to the gateway', 'Reviewed policy', 'An existing NemoClaw-compatible inference.local route for LLM tasks'] }, null, 2));
+      console.log(JSON.stringify({ notice: NOTICE, integration: 'OpenShell BYOC, not registered NemoClaw runtime', developmentImage: flags['dev-image'] === true, commands, prerequisites: ['Compatible OpenShell gateway', 'Image available to the gateway', 'Reviewed policy', 'An existing NemoClaw-compatible inference.local route for LLM tasks'] }, null, 2));
     } else {
       console.error(`${NOTICE}\nCreating an OpenShell sandbox. This does not configure inference or upstream NemoClaw registration.`);
-      await new Promise((resolve, reject) => {
-        const child = spawn(argv[0], argv.slice(1), { shell: false, stdio: 'inherit' });
-        child.once('error', () => reject(new AdapterError('OPENSHELL_UNAVAILABLE', 'Cannot start openshell')));
-        child.once('exit', (code) => { process.exitCode = code ?? 1; resolve(); });
-      });
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      process.once('SIGINT', abort); process.once('SIGTERM', abort);
+      try { await launchOpenShell(options, { signal: controller.signal }); }
+      finally { process.removeListener('SIGINT', abort); process.removeListener('SIGTERM', abort); }
     }
     return;
   }

@@ -88,3 +88,7 @@ export declare function renderDockerfile(adapter: AdapterManifest): string;
 export declare function renderDeepSeekPatch(adapter: AdapterManifest): string;
 export declare function scaffold(destination: string, options?: { name?: string; model?: string }): Promise<{ directory: string; adapter: Readonly<AdapterManifest> }>;
 export * from './testing.js';
+
+export interface OpenShellPlan { create: string[]; ready: string[]; execute: string[] }
+export declare function buildOpenShellPlan(options: OpenShellOptions): OpenShellPlan;
+export declare function launchOpenShell(options: OpenShellOptions, controls?: { signal?: AbortSignal }): Promise<{ name: string; taskSucceeded: true }>;
