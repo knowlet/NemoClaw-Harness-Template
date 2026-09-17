@@ -1,5 +1,5 @@
 /** UNOFFICIAL template generation. Generated manifests are this project's schema, not NVIDIA's. */
-import { mkdir, readFile, writeFile, mkdtemp, rm, lstat, cp } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, mkdtemp, rm, lstat, cp, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AdapterError, createAdapter, defineAdapter, NOTICE } from './sdk.mjs';
@@ -53,7 +53,11 @@ export async function scaffold(destination, { name = 'my-harness', model = 'mana
     await writeFile(path.join(temp, 'README.md'), `# ${name} — UNOFFICIAL\n\n${NOTICE}\n\nThe starter agent echoes stdin; it is NOT an LLM. Replace agent.mjs or adapter.json runtime.command with your reviewed harness.\n\nTry locally: \`printf 'hello' | node agent.mjs\`. This has no sandbox.\n\nValidate: \`node bin/nha.mjs validate adapter.json\`.\n\nBuild a development image: \`docker build --build-arg BASE_IMAGE=node:24-bookworm-slim -t ${name}:dev .\`. Tags and apt packages are mutable; release builds require reviewed image digests and package provenance.\n\nGenerate an explicit launch plan: \`node bin/nha.mjs plan --name ${name} --image ${name}:dev --dev-image --policy policy.yaml --task hello\`. The gateway and any inference route must already exist.\n\nThe state classification is descriptive; this SDK does not implement NemoClaw snapshots or registration.\n`);
     // mkdir is the final exclusive claim; rename alone could replace an empty directory.
     await mkdir(output);
-    await cp(temp, output, { recursive: true, errorOnExist: true, force: false });
+    // Node 24 refuses an existing destination directory with errorOnExist.
+    // Claim the root once, then copy only children to fresh paths.
+    for (const name of await readdir(temp)) {
+      await cp(path.join(temp, name), path.join(output, name), { recursive: true, errorOnExist: true, force: false });
+    }
     return { directory: output, adapter };
   } finally { await rm(temp, { recursive: true, force: true }); }
 }
