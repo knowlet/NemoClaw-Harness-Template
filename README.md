@@ -1,5 +1,136 @@
-# NemoClaw Harness Adapter Template — UNOFFICIAL / 非官方
+# NemoClaw Harness Adapter Template — UNOFFICIAL
 
-Independent community project by knowlet. This is **not an official NVIDIA SDK** and is not affiliated with, endorsed by, certified by, or supported by NVIDIA or DeepSeek. NemoClaw and OpenShell are names of their respective upstream projects.
+**Independent community project by knowlet. Not an official NVIDIA SDK. Not affiliated with, endorsed by, certified by, or supported by NVIDIA or DeepSeek.**
 
-A reusable harness adapter SDK and packaging template. The initial implementation is being added in the next commit. Third-party adapters are not automatically registered with official NemoClaw onboarding.
+[繁體中文](README.zh-TW.md) · [SDK reference](docs/SDK.md) · [Architecture / compatibility](docs/ARCHITECTURE.md) · [Security](SECURITY.md) · [DeepSeek candidate](examples/deepseek/README.md)
+
+A reusable **headless harness adapter SDK**, project generator, and OpenShell bring-your-own-container (BYOC) template. The SDK has zero third-party runtime dependencies, native JavaScript ESM, and TypeScript declarations. Existing Go, Python, and Node harnesses can implement the same argv/stdin process contract.
+
+> This is **not** a third-party plugin installed into the NemoClaw host CLI. Our `adapter.json` is an independent, versioned community schema, not NVIDIA's `agents/*/manifest.yaml`. Installing this package does **not** make `nemoclaw onboard --agent your-harness` work. See the upstream [extension decision](https://github.com/NVIDIA/NemoClaw/blob/eb10bf0b93f36968c841c96f58b081bc1301c485/docs/reference/extension-taxonomy-sdk-readiness.mdx).
+
+## Start without Docker, credentials, or an LLM
+
+Use Node.js 22.16+ for the SDK and local tests. Managed image launch deliberately requires Node.js 24.5+ and Linux/POSIX. The managed route and sandbox need separate configuration.
+
+```bash
+git clone -b develop https://github.com/knowlet/NemoClaw-Harness-Template.git
+cd NemoClaw-Harness-Template
+npm ci --ignore-scripts
+npm run check
+npm run demo
+node bin/nha.mjs init ./my-harness --name my-harness
+cd my-harness
+npm run validate
+printf 'hello' | node agent.mjs
+```
+
+The output is `Echo: hello`. **The demo is a real local process test, but it is not an LLM and does not run in a sandbox.** It intentionally needs no API key or external network.
+
+The generated project contains:
+
+```text
+my-harness/
+├── adapter.json           # Community schema; rejects unknown versions/fields
+├── agent.mjs              # Replace the deterministic echo with your harness
+├── Dockerfile             # Explicit base image, non-root runtime, immutable config
+├── policy.yaml            # OpenShell BYOC baseline; no extra egress allowance
+├── src/                   # Self-contained SDK and TypeScript declarations
+├── bin/nha.mjs            # init / validate / render / exec / plan / launch / doctor
+├── package.json
+├── package-lock.json
+├── LICENSE
+└── NOTICE
+```
+
+## Install the SDK in another project
+
+The package name is **`@knowlet/nemoclaw-harness-sdk`**, version `0.1.0`. **No npm registry publication is implied.** Build the installable tarball from this checkout:
+
+```bash
+npm pack
+# In your application, install the actual tarball path:
+npm install /absolute/path/knowlet-nemoclaw-harness-sdk-0.1.0.tgz
+```
+
+The tarball includes the CLI, templates, examples, declarations, and notices. CI tests an offline install in an empty consumer and then scaffolds another working project from the installed CLI.
+
+```js
+import { createAdapter, defineAdapter, runHarness } from '@knowlet/nemoclaw-harness-sdk';
+
+const input = structuredClone(createAdapter('my-go-harness', 'your-managed-model'));
+input.runtime.command = ['/opt/my-harness/bin/agent'];
+input.runtime.taskInput = 'stdin';
+const adapter = defineAdapter(input);
+
+// Call INSIDE an already established sandbox. This function only spawns a process.
+const result = await runHarness(adapter, 'Inspect the workspace');
+console.log(result.stdout);
+```
+
+No source-language rewrite is required. A Python equivalent uses `['/usr/bin/python3', '/opt/my-harness/agent.py']`; install the runtime and dependencies in the image at build time. The SDK does not download or install them on first launch.
+
+## Managed inference
+
+```js
+import { createInferenceClient } from '@knowlet/nemoclaw-harness-sdk';
+
+const client = createInferenceClient({ model: 'your-managed-model' });
+const response = await client.chat([{ role: 'user', content: 'Return exactly OK' }]);
+console.log(response.choices[0].message.content);
+```
+
+The client uses `https://inference.local/v1/chat/completions` and the **non-secret placeholder** `openshell`, not a provider API key. A compatible gateway must already route that endpoint and hold the provider credentials. No provider is created, attached, or reconfigured by this SDK. `managed-model` in the starter is a placeholder, not a claimed model offering.
+
+The client supports bounded **non-streaming Chat Completions**, including passing tool schemas and returning tool calls. It is not a tool executor, agent loop, Responses API client, or streaming SDK. An explicit loopback-only development mode is available for local mock servers. See [SDK reference](docs/SDK.md).
+
+## Build and launch an OpenShell BYOC candidate
+
+From a generated project:
+
+```bash
+# Development only: mutable base and apt repositories are not a release provenance lock.
+docker build --build-arg BASE_IMAGE=node:24-bookworm-slim -t my-harness:dev .
+
+# Preview the exact argv; no sandbox is created by plan.
+node bin/nha.mjs plan --name my-harness --image my-harness:dev \
+  --dev-image --policy policy.yaml --task hello
+
+# Explicit side effect: creates a sandbox via your installed OpenShell CLI.
+node bin/nha.mjs launch --name my-harness --image my-harness:dev \
+  --dev-image --policy policy.yaml --task hello
+```
+
+Prerequisites: a compatible OpenShell gateway, a container engine matching its driver, an image the gateway can access, and kernel support for the policy. For LLM tasks, additionally provision the managed inference route outside this SDK. A remote gateway cannot use an image existing only in your local engine.
+
+Without `--dev-image`, `plan` and `launch` reject images that are not `image@sha256:<digest>`. This verifies **reference syntax**, not the image's contents, authenticity, availability, or SBOM. Use reviewed base and runtime digests and record dependency provenance before release. Do not substitute a Docker success for OpenShell policy qualification.
+
+OpenShell replaces OCI `ENTRYPOINT`; the planner explicitly supplies the process after `--`, as required by the upstream [BYOC contract](https://github.com/NVIDIA/OpenShell/blob/c502be9fd73c41bab25f0a88587b7a3d90c96b55/examples/bring-your-own-container/README.md).
+
+## What is implemented, and what is not
+
+| Surface | Status |
+| --- | --- |
+| SDK import, process runner, local demo, scaffold, CLI, packed installation | Locally tested |
+| Manifest validation, env filtering, deadlines, cancellation, output bounds | Locally tested; defense in depth, not sandbox isolation |
+| Inference wire handling and failure cases | Tested against local HTTP fixtures; no live model claim |
+| OCI build inputs and OpenShell command generation | Generated and structurally tested; needs live deployment qualification |
+| DeepSeek headless integration | **Experimental**, source-reviewed, no bundled DSH runtime or live E2E qualification |
+| Official NemoClaw discovery, onboarding, lifecycle/recovery integration | **Not implemented; no public extension compatibility promise** |
+| Web UI authentication, streaming, snapshot/restore, automatic policy approval | Not implemented |
+
+State `persist`, `reconstruct`, and `prohibit` entries are **validated declarations**, not an implemented backup engine. Filesystem/network enforcement belongs to OpenShell. An untrusted executable can bypass this SDK from inside its sandbox; do not treat our launcher as the outer security boundary.
+
+## Development
+
+```bash
+npm run check        # Syntax/JSON/docs lint + runtime tests + packed-install smoke
+npm run doctor       # Reports local tools; does not claim a sandbox is qualified
+# With TypeScript installed:
+tsc --noEmit --strict --module NodeNext --moduleResolution NodeNext --target ES2022 test/types.mts
+```
+
+The dependency-free linter checks syntax, JSON, whitespace, relative documentation links, and unofficial notices; it is not ESLint. The GitHub workflow pins action revisions and checks Node 22.16 and Node 24. See [validation record](docs/VALIDATION.md) for what was actually executed at initial delivery.
+
+## License and names
+
+Our SDK and templates use [MIT](LICENSE). Third-party harnesses retain their own licenses and are not bundled. No NVIDIA logos are used. Keep the [NOTICE](NOTICE) when redistributing this template and do not imply official certification or support.

@@ -1,0 +1,28 @@
+name: SDK checks (unofficial)
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sdk:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.16.0', '24']
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - name: Check bundled TypeScript declarations
+        run: npm exec --yes --package=typescript@5.8.3 -- tsc --noEmit --strict --module NodeNext --moduleResolution NodeNext --target ES2022 test/types.mts
+      - name: Build SDK tarball (no registry publication)
+        run: npm pack --ignore-scripts

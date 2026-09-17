@@ -1,0 +1,18 @@
+UNOFFICIAL / 非官方
+
+This is an independent community project by knowlet. It is not an official
+NVIDIA SDK, product, plugin, or supported NemoClaw runtime integration.
+It is not affiliated with, endorsed by, certified by, or supported by NVIDIA
+or DeepSeek. Project and product names belong to their respective owners.
+
+The JavaScript SDK, private adapter schema, generator, tests, and documentation
+are this project's work. References to upstream interfaces do not confer
+compatibility, support, or approval. No NVIDIA logos are included.
+
+OpenShell provides an external sandbox boundary when separately deployed and
+configured. This SDK itself is NOT a sandbox, policy engine, PII filter,
+credential vault, or compliance certification. The echo demo is NOT an LLM.
+
+Third-party harness code and dependencies are not bundled in this SDK and
+retain their original licenses. Review their LICENSE/THIRD_PARTY_NOTICES
+before building or distributing an adapter image.

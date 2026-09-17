@@ -1,0 +1,8 @@
+node_modules/
+*.tgz
+*.log
+coverage/
+.env*
+!.env.example
+dist/
+.nha-init-*/

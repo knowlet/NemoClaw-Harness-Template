@@ -1,0 +1,52 @@
+{
+  "name": "@knowlet/nemoclaw-harness-sdk",
+  "version": "0.1.0",
+  "description": "UNOFFICIAL independent harness adapter SDK and OpenShell BYOC template; not an NVIDIA SDK",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.16.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.mjs"
+    }
+  },
+  "types": "./src/index.d.ts",
+  "bin": {
+    "nha": "bin/nha.mjs"
+  },
+  "files": [
+    "src",
+    "bin",
+    "examples",
+    "docs",
+    "LICENSE",
+    "NOTICE",
+    "README.md",
+    "README.zh-TW.md",
+    "package-lock.json",
+    "SECURITY.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "lint": "node scripts/lint.mjs",
+    "demo": "node bin/nha.mjs demo",
+    "doctor": "node bin/nha.mjs doctor",
+    "test:package": "node scripts/test-package.mjs",
+    "check": "npm run lint && npm test && npm run test:package"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/knowlet/NemoClaw-Harness-Template.git"
+  },
+  "keywords": [
+    "unofficial",
+    "harness",
+    "openshell",
+    "nemoclaw",
+    "adapter",
+    "sdk"
+  ]
+}
