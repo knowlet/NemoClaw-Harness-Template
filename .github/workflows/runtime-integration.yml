@@ -53,17 +53,20 @@ jobs:
           NEMOCLAW_PROVIDER: custom
           NEMOCLAW_MODEL: fixture-model
           NEMOCLAW_PROVIDER_KEY: fixture-only-not-a-secret
+          NEMOCLAW_ENDPOINT_URL: http://host.openshell.internal:18080/v1
         run: |
           node scripts/integration/fixture-provider.mjs > "$RUNNER_TEMP/provider.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/provider.pid"
-          host_ip=$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')
-          export NEMOCLAW_ENDPOINT_URL="http://$host_ip:18080/v1"
-          curl --retry 10 --retry-connrefused --retry-delay 1 --fail "$NEMOCLAW_ENDPOINT_URL/models"
+          curl --retry 10 --retry-connrefused --retry-delay 1 --fail http://127.0.0.1:18080/v1/models
           set +e
           timeout 900 node .upstream/NemoClaw/bin/nemoclaw.js onboard --name nha-host --agent openclaw --no-gpu --no-sandbox-gpu --non-interactive --yes --yes-i-accept-third-party-software > "$RUNNER_TEMP/onboard.log" 2>&1
           rc=$?
           echo "Actual NemoClaw onboarding exit code: $rc"
-          if [ "$rc" != 0 ]; then tail -n 30 "$RUNNER_TEMP/onboard.log"; fi
+          if [ "$rc" != 0 ]; then
+            tail -n 30 "$RUNNER_TEMP/onboard.log"
+            log="$HOME/.local/state/nemoclaw/openshell-docker-gateway/openshell-gateway.log"
+            if test -f "$log"; then grep -Ei 'error|warn|inference' "$log" | tail -n 25; fi
+          fi
           exit "$rc"
       - name: Build generated adapter and test real OpenShell BYOC
         id: byoc
