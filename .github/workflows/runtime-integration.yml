@@ -1,0 +1,65 @@
+name: Runtime integration (unofficial)
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  live:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: 1eb370f20530bd1312ac86a27782ef8501b28ade
+          path: .upstream/NemoClaw
+          persist-credentials: false
+      - name: Build actual NemoClaw CLI from pinned upstream source
+        working-directory: .upstream/NemoClaw
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm --prefix nemoclaw ci --ignore-scripts --no-audit --no-fund
+          npm run build:cli
+          node bin/nemoclaw.js --version
+          node bin/nemoclaw.js --help
+          node bin/nemoclaw.js onboard --help
+      - name: Install and inspect OpenShell v0.0.116
+        run: |
+          mkdir -p "$RUNNER_TEMP/openshell" "$HOME/.local/bin"
+          cd "$RUNNER_TEMP/openshell"
+          base=https://github.com/NVIDIA/OpenShell/releases/download/v0.0.116
+          curl -fsSLO "$base/openshell-x86_64-unknown-linux-musl.tar.gz"
+          curl -fsSLO "$base/openshell-checksums-sha256.txt"
+          grep ' openshell-x86_64-unknown-linux-musl.tar.gz$' openshell-checksums-sha256.txt | sha256sum --check --strict
+          tar -xzf openshell-x86_64-unknown-linux-musl.tar.gz
+          install -m 0755 "$(find . -type f -name openshell | head -1)" "$HOME/.local/bin/openshell"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/openshell" --version
+          "$HOME/.local/bin/openshell" gateway start --help
+          "$HOME/.local/bin/openshell" sandbox create --help
+      - name: Build generated adapter image and launch an actual sandbox
+        run: |
+          set -o pipefail
+          node bin/nha.mjs init "$RUNNER_TEMP/harness" --name integration-echo
+          docker build --build-arg BASE_IMAGE=node:24-bookworm-slim -t nha-integration:dev "$RUNNER_TEMP/harness"
+          openshell gateway start
+          timeout 180 node bin/nha.mjs launch --name nha-integration --image nha-integration:dev --dev-image --policy "$RUNNER_TEMP/harness/policy.yaml" --task NHA_LIVE_OK | tee "$RUNNER_TEMP/live.txt"
+          grep -F 'Echo: NHA_LIVE_OK' "$RUNNER_TEMP/live.txt"
+      - name: Inspect real NemoClaw state
+        run: |
+          node .upstream/NemoClaw/bin/nemoclaw.js list
+      - name: Cleanup disposable sandbox
+        if: always()
+        run: |
+          if command -v openshell >/dev/null; then
+            openshell sandbox list || true
+            openshell sandbox delete nha-integration || true
+          fi
