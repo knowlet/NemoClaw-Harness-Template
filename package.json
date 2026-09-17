@@ -41,7 +41,8 @@
     "test:package": "node scripts/test-package.mjs",
     "check": "npm run lint && npm test && npm run test:package",
     "pack:sdk": "node scripts/pack-sdk.mjs",
-    "test:harness": "node --test test/testkit.test.mjs"
+    "test:harness": "node --test test/testkit.test.mjs",
+    "test:frameworks": "node scripts/test-frameworks.mjs"
   },
   "repository": {
     "type": "git",

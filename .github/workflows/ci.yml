@@ -22,6 +22,8 @@ jobs:
           node-version: ${{ matrix.node }}
       - run: npm ci --ignore-scripts
       - run: npm run check
+      - name: Python and Go harness interoperability
+        run: npm run test:frameworks
       - name: Check bundled TypeScript declarations
         run: npm exec --yes --package=typescript@5.8.3 -- tsc --noEmit --strict --module NodeNext --moduleResolution NodeNext --target ES2022 test/types.mts
       - name: Build SDK tarball (no registry publication)

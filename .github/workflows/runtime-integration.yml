@@ -79,7 +79,14 @@ jobs:
           printf '\nUSER root\nRUN mkdir /policy-probe && chmod 0777 /policy-probe && echo test-only > /policy-probe/readable.txt && chmod 0644 /policy-probe/readable.txt\nUSER 1000:1000\n' >> "$RUNNER_TEMP/harness/Dockerfile"
           docker build --build-arg BASE_IMAGE=node:24-bookworm-slim -t nha-integration:dev "$RUNNER_TEMP/harness" > "$RUNNER_TEMP/build.log" 2>&1 || { tail -n 25 "$RUNNER_TEMP/build.log"; exit 1; }
           docker image inspect nha-integration:dev --format '{{.Id}}' > reports/image-id.txt
-          timeout 180 node bin/nha.mjs launch --name nha-integration --image nha-integration:dev --dev-image --policy "$RUNNER_TEMP/harness/policy.yaml" --task NHA_LIVE_OK | tee "$RUNNER_TEMP/live.txt"
+          if ! timeout 180 node bin/nha.mjs launch --name nha-integration --image nha-integration:dev --dev-image --policy "$RUNNER_TEMP/harness/policy.yaml" --task NHA_LIVE_OK 2>&1 | tee "$RUNNER_TEMP/live.txt"; then
+            openshell sandbox get nha-integration || true
+            for cid in $(docker ps -aq --filter ancestor=nha-integration:dev); do
+              docker inspect --format '{{json .State}}' "$cid"
+              docker logs --tail 80 "$cid" 2>&1
+            done
+            exit 1
+          fi
           grep -F 'Echo: NHA_LIVE_OK' "$RUNNER_TEMP/live.txt"
           openshell sandbox exec -n nha-integration -- node /opt/nha/integration-smoke.mjs byoc | tee reports/byoc.json
       - name: Run harness suite inside the actual NemoClaw-managed sandbox
