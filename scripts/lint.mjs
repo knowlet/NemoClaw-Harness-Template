@@ -30,13 +30,13 @@ async function walk(dir) {
 await walk(root);
 const pkg = JSON.parse(await readFile('package.json', 'utf8'));
 if (pkg.dependencies && Object.keys(pkg.dependencies).length) throw new Error('Runtime must remain dependency-free');
-for (const file of ['README.md', 'README.zh-TW.md', 'NOTICE', 'docs/SDK.md', 'docs/NATIVE.md']) {
+for (const file of ['README.md', 'README.zh-TW.md', 'NOTICE', 'docs/SDK.md', 'docs/NATIVE.md', 'docs/QUICKSTART.md']) {
   if (!/UNOFFICIAL|非官方/.test(await readFile(file, 'utf8'))) throw new Error(`Missing notice: ${file}`);
 }
 // Native packaging is revision-locked; every published claim must name the same upstream revision.
 const pinned = /revision: '([0-9a-f]{40})'/.exec(await readFile('src/native.mjs', 'utf8'))?.[1];
 if (!pinned) throw new Error('src/native.mjs must declare the pinned NemoClaw revision');
-for (const file of ['README.md', 'README.zh-TW.md', 'docs/NATIVE.md', '.github/workflows/runtime-integration.yml']) {
+for (const file of ['README.md', 'README.zh-TW.md', 'docs/NATIVE.md', 'docs/QUICKSTART.md', '.github/workflows/runtime-integration.yml', '.github/workflows/quickstart.yml']) {
   if (!(await readFile(file, 'utf8')).includes(pinned)) throw new Error(`Pinned NemoClaw revision missing from ${file}`);
 }
 console.log(`Lint passed: ${checked} source/doc files (syntax, JSON, whitespace, local links, notices, pinned revision)`);

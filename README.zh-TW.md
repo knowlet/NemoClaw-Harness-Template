@@ -4,11 +4,32 @@
 
 [English](README.md) · [SDK 文件](docs/SDK.md) · [架構與相容性](docs/ARCHITECTURE.md) · [安全邊界](SECURITY.md)
 
-這個專案把 headless harness 的執行、設定、模型介面、OCI 建置與 OpenShell BYOC 啟動整理成可重用的 SDK。JavaScript 原生 ESM、附 TypeScript 型別、零第三方執行期依賴；既有 Go、Python 或 Node harness 都能透過 stdin／argv 接入。
+把 harness 打包成 **NemoClaw CLI 自己 onboard 的原生 agent**。`nha native init`／`nha native install` 會產生 NemoClaw 掃描的 `agents/<name>/` 目錄，所以 `nemoclaw onboard --agent <name>` 會建置映像檔、建立 sandbox，並在裡面執行你的 harness。請從 **[原生 quickstart](docs/QUICKSTART.md)** 開始。
 
-**它不是安裝到 NemoClaw host CLI 的 plugin。** 本專案的 `adapter.json` 是自有 schema，不是 NVIDIA 的 `agents/*/manifest.yaml`。安裝後不會自動取得 `nemoclaw onboard --agent your-harness`；官方目前沒有承諾這種公開擴充介面的相容性，詳見[官方說明](https://github.com/NVIDIA/NemoClaw/blob/eb10bf0b93f36968c841c96f58b081bc1301c485/docs/reference/extension-taxonomy-sdk-readiness.mdx)。
+本專案提供兩條不同的整合路徑：
 
-## 直接開始
+| 路徑 | 做什麼 | 什麼時候用 |
+| --- | --- | --- |
+| **原生 agent 打包**（`nha native`） | 把 `agents/<name>/` 寫進指定版本的 NemoClaw source checkout，交由 NemoClaw 自己的 onboarding 管理 | 你要讓 `nemoclaw onboard --agent <name>` 生效 |
+| **獨立 SDK 與 OpenShell BYOC**（`adapter.json`） | 產生獨立 SDK、映像檔配方與 policy，並由你自己 plan／launch OpenShell sandbox | 你想自己把映像檔交給 OpenShell，或只使用 SDK 與 process runner |
+
+`adapter.json` 是自有且帶版本的社群 schema，不是 NVIDIA 的 `manifest.yaml`，也不會向 NemoClaw 註冊任何東西。原生路徑確實會註冊 agent，但只針對它鎖定的上游版本；這個 `agents/` 版面不是 NVIDIA 公開的擴充 API。詳見[官方說明](https://github.com/NVIDIA/NemoClaw/blob/eb10bf0b93f36968c841c96f58b081bc1301c485/docs/reference/extension-taxonomy-sdk-readiness.mdx)。
+
+## 快速開始：讓 NemoClaw onboard 你的 harness
+
+```bash
+git clone -b develop https://github.com/knowlet/NemoClaw-Harness-Template.git
+cd NemoClaw-Harness-Template
+node scripts/quickstart.mjs --workdir /tmp/nha-quickstart
+```
+
+這個 runner 會在乾淨的機器上跑完整份教學，並逐步印出每個指令：建置鎖定版本的 NemoClaw CLI、安裝經 checksum 鎖定的 OpenShell、產生並安裝 agent 套件、onboard，最後在 sandbox 內執行 harness。成功時會印出 `QUICKSTART OK`。整個流程不需要模型或 API key，會用一個確定性的本機 fixture 代替。
+
+成功的長相是：`native verify` 印出 `loaderAccepted: true`、onboarding 最後印出 `✓ <Your Agent> terminal runtime is ready`、sandbox 內執行得到 `Echo: NHA_NATIVE_OK`。
+
+逐步說明與疑難排解請見 **[原生 quickstart 指南](docs/QUICKSTART.md)**；原生打包的細節與限制在[原生打包說明](docs/NATIVE.md)。
+
+## 只用本機 SDK（不需要 Docker 或模型）
 
 本機 SDK 與測試需要 Node.js 22.16+；受管理的容器啟動刻意要求 Linux/POSIX 與 Node.js 24.5+。本機 demo 不需要 Docker、GPU、模型或 API key。
 
@@ -71,7 +92,7 @@ SDK 提供非串流 Chat Completions、tool schema 傳遞、回應大小限制�
 
 `nha exec` 必須明確選擇 `--managed` 或 `--allow-host`。後者會直接在本機執行程式，**不是安全隔離**。前者檢查 root-owned／唯讀設定及非 root 程序，但這些檢查也不是沙箱證明。外層 filesystem／network／process 控制仍由 OpenShell 負責。
 
-## OCI／OpenShell
+## 進階：OCI／OpenShell BYOC
 
 在產生的專案內：
 
@@ -86,7 +107,7 @@ node bin/nha.mjs launch --name my-harness --image my-harness:dev \
 
 `plan` 只輸出 argv；`launch` 才建立 OpenShell sandbox。未加 `--dev-image` 時必須提供 image digest。遠端 gateway 必須能從 registry 取得映像檔。echo 不需推論路由，真正的 LLM harness 則需要預先配置。
 
-## 打包成 NemoClaw 原生 agent
+## 進階：原生打包細節
 
 上面的 BYOC 路徑由你自己把映像檔交給 OpenShell；原生路徑改為產生 NemoClaw CLI 在 onboarding
 時掃描的 `agents/<name>/` 目錄，讓 `nemoclaw onboard --agent <name>` 直接管理你的 harness。

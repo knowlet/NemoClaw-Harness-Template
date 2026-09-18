@@ -4,11 +4,32 @@
 
 [繁體中文](README.zh-TW.md) · [SDK reference](docs/SDK.md) · [Architecture / compatibility](docs/ARCHITECTURE.md) · [Security](SECURITY.md) · [DeepSeek candidate](examples/deepseek/README.md)
 
-A reusable **headless harness adapter SDK**, project generator, and OpenShell bring-your-own-container (BYOC) template. The SDK has zero third-party runtime dependencies, native JavaScript ESM, and TypeScript declarations. Existing Go, Python, and Node harnesses can implement the same argv/stdin process contract.
+Package a harness so the **NemoClaw CLI onboards it itself**. `nha native init` and `nha native install` write the `agents/<name>/` directory that the NemoClaw CLI scans, so `nemoclaw onboard --agent <name>` builds the image, creates the sandbox, and runs your harness inside it. Start with the **[native quickstart](docs/QUICKSTART.md)**.
 
-> This is **not** a third-party plugin installed into the NemoClaw host CLI. Our `adapter.json` is an independent, versioned community schema, not NVIDIA's `agents/*/manifest.yaml`. Installing this package does **not** make `nemoclaw onboard --agent your-harness` work. See the upstream [extension decision](https://github.com/NVIDIA/NemoClaw/blob/eb10bf0b93f36968c841c96f58b081bc1301c485/docs/reference/extension-taxonomy-sdk-readiness.mdx).
+Two integrations ship here, and they are different:
 
-## Start without Docker, credentials, or an LLM
+| Path | What it does | Use it when |
+| --- | --- | --- |
+| **Native agent packaging** (`nha native`) | Writes `agents/<name>/` into a NemoClaw source checkout at one pinned revision, so NemoClaw's own onboarding manages the runtime | You want `nemoclaw onboard --agent <name>` to work |
+| **Standalone SDK + OpenShell BYOC** (`adapter.json`) | Generates an independent SDK, image recipe, and policy, and plans or launches an OpenShell sandbox for you | You want to hand OpenShell an image yourself, or only use the SDK and process runner |
+
+`adapter.json` is an independent, versioned community schema, not NVIDIA's `manifest.yaml`, and it registers nothing with NemoClaw. The native path does register an agent, but only against the pinned revision it targets: that `agents/` layout is not a published NVIDIA extension API. See the upstream [extension decision](https://github.com/NVIDIA/NemoClaw/blob/eb10bf0b93f36968c841c96f58b081bc1301c485/docs/reference/extension-taxonomy-sdk-readiness.mdx).
+
+## Quickstart: onboard your harness
+
+```bash
+git clone -b develop https://github.com/knowlet/NemoClaw-Harness-Template.git
+cd NemoClaw-Harness-Template
+node scripts/quickstart.mjs --workdir /tmp/nha-quickstart
+```
+
+That runner does the whole tutorial on a clean machine and prints every command: it builds the pinned NemoClaw CLI, installs the checksum-pinned OpenShell, creates and installs the agent package, onboards it, and runs the harness inside the sandbox. It ends with `QUICKSTART OK`. No model or API key is needed — a deterministic local fixture stands in.
+
+Success looks like `loaderAccepted: true` from `native verify`, `✓ <Your Agent> terminal runtime is ready` at the end of onboarding, and `Echo: NHA_NATIVE_OK` from the harness inside the sandbox.
+
+The same steps, explained one at a time with a troubleshooting section, are in the **[native quickstart guide](docs/QUICKSTART.md)**. Native packaging details and its limits are in the [native packaging guide](docs/NATIVE.md).
+
+## Local SDK only (no Docker, no model)
 
 Use Node.js 22.16+ for the SDK and local tests. Managed image launch deliberately requires Node.js 24.5+ and Linux/POSIX. The managed route and sandbox need separate configuration.
 
@@ -95,7 +116,7 @@ The client uses `https://inference.local/v1/chat/completions` and the **non-secr
 
 The client supports bounded **non-streaming Chat Completions**, including passing tool schemas and returning tool calls. It is not a tool executor, agent loop, Responses API client, or streaming SDK. An explicit loopback-only development mode is available for local mock servers. See [SDK reference](docs/SDK.md).
 
-## Build and launch an OpenShell BYOC candidate
+## Advanced: build and launch an OpenShell BYOC candidate
 
 From a generated project:
 
@@ -118,7 +139,7 @@ Without `--dev-image`, `plan` and `launch` reject images that are not `image@sha
 
 OpenShell replaces OCI `ENTRYPOINT`; the planner explicitly supplies the process after `--`, as required by the upstream [BYOC contract](https://github.com/NVIDIA/OpenShell/blob/c502be9fd73c41bab25f0a88587b7a3d90c96b55/examples/bring-your-own-container/README.md).
 
-## Package a harness as a native NemoClaw agent
+## Advanced: native packaging details
 
 The BYOC path above hands an image to OpenShell yourself. The native path instead writes the
 `agents/<name>/` directory that the NemoClaw CLI scans during onboarding, so

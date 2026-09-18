@@ -46,6 +46,8 @@ A pinned NVIDIA/NemoClaw checkout was built locally (aarch64) with its own npm c
 
 Two real defects surfaced only in this end-to-end run and are fixed in the generator: the image lacked iproute2/nftables, which the OpenShell supervisor needs to build its network namespace, and the manifest declared no binary_path, which NemoClaw terminal-agent setup requires. Earlier attempts failed on each in turn. Deployment evidence is also recorded by the CI workflow below.
 
+The quickstart runner (scripts/quickstart.mjs) then completed in reuse mode against that checkout on aarch64: preflight, OpenShell install, native init/install/verify, real onboarding, and in-sandbox execution all succeeded, ending in QUICKSTART OK with the sandbox deleted afterwards. A first attempt failed on a stale gateway process from an earlier run still holding port 8080; that case is now in the quickstart troubleshooting section.
+
 Runtime integration run [35326474616](https://github.com/knowlet/NemoClaw-Harness-Template/actions/runs/35326474616) on commit `c3af650` passed every recorded check on a GitHub-hosted Ubuntu 24.04 Docker runner (`cli`, `native_loader`, `onboard`, `native`, `byoc`, `embedded` all `success`). That run builds the pinned NemoClaw CLI, installs checksum-verified OpenShell 0.0.116, verifies the generated agent against the real loader, onboards it, executes the harness inside the sandbox, and then runs the OpenShell BYOC path.
 
 ## Native packaging review round

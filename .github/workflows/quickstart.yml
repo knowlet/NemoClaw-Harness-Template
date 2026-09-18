@@ -1,0 +1,65 @@
+name: Native quickstart (clean environment, unofficial)
+# Proves the documented quickstart works from a fresh machine with no prior NemoClaw state.
+# This job is deliberately native-only: it never onboards OpenClaw first, so it shows the
+# agents/<name>/ path stands on its own.
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: quickstart-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  quickstart:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Fail fast if the runner already has NemoClaw state
+        run: |
+          if [ -e "$HOME/.local/state/nemoclaw" ]; then
+            echo "This job must start clean, but NemoClaw state already exists." >&2
+            exit 1
+          fi
+          echo "No pre-existing NemoClaw state."
+      - name: Run the quickstart exactly as documented
+        run: |
+          set -o pipefail
+          node scripts/quickstart.mjs --workdir "$RUNNER_TEMP/quickstart" --destroy 2>&1 | tee "$RUNNER_TEMP/quickstart.log"
+      - name: Record the pinned versions used
+        if: always()
+        run: |
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "nemoclawRevision: 1eb370f20530bd1312ac86a27782ef8501b28ade"
+            echo "arch: $(uname -m)"
+            echo "node: $(node --version)"
+            echo "docker: $(docker --version)"
+            echo "trustedCILog: "The checksum-pinned OpenShell install is the same command the quickstart documents.""
+          } > "$RUNNER_TEMP/quickstart-versions.txt"
+          cat "$RUNNER_TEMP/quickstart-versions.txt"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: quickstart-evidence
+          path: |
+            ${{ runner.temp }}/quickstart.log
+            ${{ runner.temp }}/quickstart-versions.txt
+          retention-days: 14
+      - name: Clean up any sandbox the run created
+        if: always()
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          if command -v openshell >/dev/null; then
+            openshell sandbox list || true
+            openshell sandbox delete my-sandbox || true
+            openshell sandbox delete my-harness || true
+          fi
+          docker ps -a --format '{{.Names}}' || true
