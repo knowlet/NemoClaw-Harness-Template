@@ -1,5 +1,4 @@
 // TypeScript source of truth; declarations are emitted by tsc.
-// @ts-nocheck
 /** UNOFFICIAL CLI for NemoClaw-native agent packaging. Not an NVIDIA tool. */
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
