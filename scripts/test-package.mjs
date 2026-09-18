@@ -19,12 +19,12 @@ try {
   const generated = path.join(temp, 'generated');
   run(process.execPath, [cli, 'init', generated, '--name', 'packed-harness'], consumer);
   run(npm, ['ci', '--offline', '--ignore-scripts', '--no-audit', '--no-fund'], generated);
-  assert.match(run(process.execPath, ['bin/nha.mjs', 'validate', 'adapter.json'], generated), /valid/);
-  assert.match(run(process.execPath, ['bin/nha.mjs', 'demo'], generated), /Echo: Hello, harness!/);
+  assert.match(run(process.execPath, ['bin/nha.js', 'validate', 'adapter.json'], generated), /valid/);
+  assert.match(run(process.execPath, ['bin/nha.js', 'demo'], generated), /Echo: Hello, harness!/);
   assert.match(run(npm, ['test'], generated), /harness contract/);
   const lock = JSON.parse(await readFile(path.join(generated, 'package-lock.json'), 'utf8'));
   assert.equal(lock.name, 'packed-harness');
-  assert.ok(packed.files.some((file) => file.path === 'src/index.d.ts'));
+  assert.ok(packed.files.some((file) => file.path === 'dist/src/index.d.ts'));
   assert.ok(packed.files.some((file) => file.path === 'NOTICE'));
   console.log('Package smoke passed: pack -> offline install -> ESM import -> CLI demo -> scaffold -> offline npm ci -> validate/demo/harness suite');
 } finally { await rm(temp, { recursive: true, force: true }); }
