@@ -5,7 +5,6 @@ import * as deploy from './deploy.js';
 import * as native from './native.js';
 
 export type {
-  AdapterError,
   AdapterManifest,
   RunOptions,
   RunResult,
@@ -32,7 +31,6 @@ export type {
 } from './testing-types.js';
 
 import type {
-  AdapterError as AdapterErrorType,
   AdapterManifest,
   RunOptions,
   RunResult,
@@ -60,9 +58,14 @@ export const API_VERSION: 'harness-adapter.knowlet.dev/v1alpha1' = sdk.API_VERSI
 export const INFERENCE_URL: 'https://inference.local/v1' = sdk.INFERENCE_URL;
 export const PLACEHOLDER_TOKEN: 'openshell' = sdk.PLACEHOLDER_TOKEN;
 export const NOTICE: string = sdk.NOTICE;
+export interface AdapterError extends Error {
+  readonly code: string;
+}
 export const AdapterError: {
-  new (code: string, message: string): AdapterErrorType;
-} = sdk.AdapterError;
+  new (code: string, message: string): AdapterError;
+} = sdk.AdapterError as unknown as {
+  new (code: string, message: string): AdapterError;
+};
 
 export const defineAdapter: (input: AdapterManifest) => Readonly<AdapterManifest> = sdk.defineAdapter;
 export const createAdapter: (name?: string, model?: string) => Readonly<AdapterManifest> = sdk.createAdapter;
