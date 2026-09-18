@@ -4,9 +4,9 @@ import { readFile, stat, writeFile, mkdtemp, mkdir, rm } from 'node:fs/promises'
 import path from 'node:path';
 import os from 'node:os';
 import { AdapterError, assertManagedFile, loadAdapter, runSuite, toJUnit } from '../src/index.js';
-export async function testCommand(args) {
+export async function testCommand(args: string[]) {
   const [suiteFile, ...rest] = args;
-  const flags = {};
+  const flags: Record<string, any> = {};
   if (!suiteFile || suiteFile.startsWith('--')) throw new AdapterError('USAGE', 'test requires a suite JSON file');
   for (let i = 0; i < rest.length; i++) {
     const f = rest[i];
