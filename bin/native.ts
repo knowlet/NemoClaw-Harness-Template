@@ -7,8 +7,8 @@ import { AdapterError, NOTICE, NATIVE_CONTRACT, scaffoldNativeAgent, installNati
 const BOOLEAN_FLAGS = new Set(['replace', 'help']);
 const VALUE_FLAGS = new Set(['name', 'nemoclaw', 'display-name', 'description', 'harness', 'model', 'json']);
 
-function parse(args) {
-  const positional = [], flags = {};
+function parse(args: string[]) {
+  const positional: string[] = [], flags: Record<string, any> = {};
   for (let i = 0; i < args.length; i++) {
     const value = args[i];
     if (!value.startsWith('--')) { positional.push(value); continue; }
@@ -37,7 +37,7 @@ init and install only touch the local filesystem; nothing is published.
 `);
 }
 
-export async function nativeCommand(args) {
+export async function nativeCommand(args: string[]) {
   const { positional, flags } = parse(args);
   const [action, directory] = positional;
   if (!action || flags.help) { help(); return; }
