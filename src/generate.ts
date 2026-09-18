@@ -1,5 +1,4 @@
 // TypeScript source of truth; declarations are emitted by tsc.
-// @ts-nocheck
 /** UNOFFICIAL template generation. Generated manifests are this project's schema, not NVIDIA's. */
 import { mkdir, readFile, writeFile, mkdtemp, rm, lstat, cp, readdir } from 'node:fs/promises';
 import path from 'node:path';
