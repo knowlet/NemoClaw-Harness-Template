@@ -19,9 +19,9 @@ import type {
 
 export const SUITE_VERSION: 'harness-suite/v1' = testkit.SUITE_VERSION;
 export const defineSuite: (input: HarnessSuite) => Readonly<HarnessSuite> = testkit.defineSuite;
-export const runSuite: (input: HarnessSuite, options: SuiteOptions) => Promise<SuiteReport> = testkit.runSuite;
+export const runSuite: (input: HarnessSuite, options: SuiteOptions) => Promise<SuiteReport> = testkit.runSuite as unknown as (input: HarnessSuite, options: SuiteOptions) => Promise<SuiteReport>;
 export const toJUnit: (report: SuiteReport) => string = testkit.toJUnit;
 export const createMockInferenceServer: (options?: {
   model?: string;
   replies?: Array<string | MockInferenceReply>;
-}) => Promise<MockInferenceServer> = testkit.createMockInferenceServer;
+}) => Promise<MockInferenceServer> = testkit.createMockInferenceServer as unknown as (options?: { model?: string; replies?: Array<string | MockInferenceReply> }) => Promise<MockInferenceServer>;
