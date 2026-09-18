@@ -108,7 +108,7 @@ The layout is pinned to `NATIVE_CONTRACT.revision` and is internal to that upstr
 
 ## Errors and stability
 
-Relevant codes include `INVALID_MANIFEST`, `UNTRUSTED_CONFIG`, `INVALID_TASK`, `SPAWN_FAILED`, `PROCESS_FAILED`, `TIMEOUT`, `ABORTED`, `OUTPUT_LIMIT`, `INVALID_ENDPOINT`, `INVALID_PARAMETERS`, `HTTP_ERROR`, `RESPONSE_LIMIT`, `INVALID_RESPONSE`, `TRANSPORT_FAILED`, and `UNPINNED_IMAGE`.
+Relevant codes include `INVALID_MANIFEST`, `INVALID_PACKAGE`, `NOT_A_CHECKOUT`, `NOT_BUILT`, `SAME_PATH`, `NOT_SDK_PACKAGE`, `INSTALL_FAILED`, `DESTINATION_EXISTS`, `VERIFY_FAILED`, `UNTRUSTED_CONFIG`, `INVALID_TASK`, `SPAWN_FAILED`, `PROCESS_FAILED`, `TIMEOUT`, `ABORTED`, `OUTPUT_LIMIT`, `INVALID_ENDPOINT`, `INVALID_PARAMETERS`, `HTTP_ERROR`, `RESPONSE_LIMIT`, `INVALID_RESPONSE`, `TRANSPORT_FAILED`, and `UNPINNED_IMAGE`.
 
 This is a `0.x` community SDK with an explicitly alpha adapter schema. Pin the package version. Unknown schema versions fail closed; automatic migration is not implemented. Upstream NemoClaw/OpenShell/DeepSeek compatibility is separately recorded in [architecture](ARCHITECTURE.md), not guaranteed by our package version.
 

@@ -48,6 +48,22 @@ Two real defects surfaced only in this end-to-end run and are fixed in the gener
 
 Runtime integration run [35326474616](https://github.com/knowlet/NemoClaw-Harness-Template/actions/runs/35326474616) on commit `c3af650` passed every recorded check on a GitHub-hosted Ubuntu 24.04 Docker runner (`cli`, `native_loader`, `onboard`, `native`, `byoc`, `embedded` all `success`). That run builds the pinned NemoClaw CLI, installs checksum-verified OpenShell 0.0.116, verifies the generated agent against the real loader, onboards it, executes the harness inside the sandbox, and then runs the OpenShell BYOC path.
 
+## Native packaging review round
+
+A review pass over commit `7f4f0b1` reported defects in the native packaging code. Each was reproduced locally before the fix and re-checked after it:
+
+| Defect | Before | After |
+| --- | --- | --- |
+| `--replace` deleted the installed package before the replacement existed | Installing a package over its own installed directory returned ENOENT and destroyed the package, including local edits; a mid-copy failure lost the previous package | The replacement is staged and re-validated, then swapped in; same-path and overlapping paths are refused with `SAME_PATH`, and a failed copy leaves the previous package intact |
+| `readNativePackage` did not require `launcher.sh` | A package missing the launcher passed validation and install, then failed the image build | One shared `NATIVE_REQUIRED_FILES` list drives generator and validator, and every entry must be a regular file |
+| Agent names could collide with runtime paths | `node` and `nemoclaw-start` were accepted and would overwrite the interpreter and entrypoint | A reserved-name list is refused in both the generator and the package validator |
+| `--replace` could delete a shipped upstream agent | Installing a package named `openclaw` replaced NVIDIA's own agent directory | Replacement is refused unless the existing directory carries this SDK's `native-agent.json` (`NOT_SDK_PACKAGE`) |
+| `--json FILE` was parsed as a boolean flag | The filename became a stray positional and the report was never written | `--json` takes a value and writes the report |
+| Timeout was reported as a generic failure | A probe deadline produced `VERIFY_FAILED` with an exit of `null` | A deadline reports `TIMEOUT`, probe output is bounded, and stderr is drained so the probe cannot block on a full pipe |
+| The starter hijacked the literal task `smoke` | A real task whose text was exactly `smoke` returned the smoke sentinel | The sentinel is `--smoke` |
+
+Regression tests cover each case, including a staging-directory check and a foreign-agent-directory check.
+
 ## Limits
 
 No real-model quality benchmark, DeepSeek runtime boot, dual-architecture qualification, GPU inference, or lifecycle/snapshot/restore test is claimed. Native packaging registers one agent for one pinned NemoClaw revision; other NemoClaw-managed operations (snapshots, recovery, lifecycle verbs) remain unimplemented. Filesystem and egress security are established only for explicit assertions that actually passed, not by an SDK status flag.

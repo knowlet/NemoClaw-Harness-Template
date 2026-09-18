@@ -1,6 +1,6 @@
 /** UNOFFICIAL NemoClaw-native agent packaging. Not an NVIDIA extension API or product. */
 import { spawn } from 'node:child_process';
-import { cp, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { AdapterError, NOTICE } from './sdk.mjs';
@@ -19,14 +19,44 @@ export const NATIVE_CONTRACT = Object.freeze({
   dockerfile: 'Dockerfile',
   start: 'start.sh',
   harness: 'harness.mjs',
+  launcher: 'launcher.sh',
   metadata: 'native-agent.json',
 });
 
 export const NATIVE_PACK_VERSION = 1;
 
 const AGENT_NAME = /^[a-z][a-z0-9-]{0,31}$/;
+
+/**
+ * Files a native package must carry for the generated Dockerfile to build.
+ * The generator and the validator read one list so the two cannot drift.
+ */
+export const NATIVE_REQUIRED_FILES = Object.freeze([
+  NATIVE_CONTRACT.manifest,
+  NATIVE_CONTRACT.policy,
+  NATIVE_CONTRACT.dockerfile,
+  NATIVE_CONTRACT.start,
+  NATIVE_CONTRACT.harness,
+  NATIVE_CONTRACT.launcher,
+]);
+
+/**
+ * Names this packaging must refuse. The launcher installs to
+ * /usr/local/bin/<name>, so the interpreter and the entrypoint are off limits,
+ * and the upstream agents already own a directory under agents/.
+ */
+const RESERVED_AGENT_NAMES = Object.freeze([
+  'node',
+  'nemoclaw-start',
+  'openclaw',
+  'hermes',
+  'pi',
+  'nemocua',
+  'langchain-deepagents-code',
+]);
 const SANDBOX_HOME = '/sandbox';
 const SANDBOX_UID = 999;
+const VERIFY_MAX_BYTES = 1 << 20;
 
 function fail(code, message) { throw new AdapterError(code, message); }
 
@@ -42,6 +72,7 @@ const lines = (...rows) => rows.join('\n') + '\n';
 export function defineNativeAgent(input = {}) {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_MANIFEST', 'Native agent input must be an object');
   if (typeof input.name !== 'string' || !AGENT_NAME.test(input.name)) fail('INVALID_MANIFEST', 'Agent name must start with a lowercase letter and use only lowercase letters, digits, and dashes (32 characters max)');
+  if (RESERVED_AGENT_NAMES.includes(input.name)) fail('INVALID_MANIFEST', 'Agent name is reserved because it collides with a runtime path or a shipped agent: ' + input.name);
   const name = input.name;
   const harness = input.harness ?? 'echo';
   if (harness !== 'echo' && harness !== 'external') fail('INVALID_MANIFEST', 'harness must be echo or external');
@@ -76,7 +107,7 @@ export function renderNativeManifest(input) {
     '  kind: terminal',
     '  headless_command: ' + yaml('node ' + agent.harnessPath),
     '  smoke_commands:',
-    '    - ' + yaml(agent.binaryPath + ' smoke'),
+    '    - ' + yaml(agent.binaryPath + ' --smoke'),
     'config:',
     '  dir: ' + agent.stateDir,
     '  config_file: config.json',
@@ -142,7 +173,7 @@ export function renderNativeDockerfile(input) {
     'RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates iproute2 nftables && rm -rf /var/lib/apt/lists/*',
     'RUN groupadd --gid ' + SANDBOX_UID + ' sandbox && useradd --uid ' + SANDBOX_UID + ' --gid sandbox --no-create-home --home-dir ' + SANDBOX_HOME + ' --shell /usr/sbin/nologin sandbox && install -d -o root -g root -m 0755 ' + agent.installDir + ' && install -d -o sandbox -g sandbox -m 0700 ' + agent.stateDir,
     'COPY ' + NATIVE_CONTRACT.agentRoot + '/' + agent.name + '/' + NATIVE_CONTRACT.harness + ' ' + agent.harnessPath,
-    'COPY ' + NATIVE_CONTRACT.agentRoot + '/' + agent.name + '/launcher.sh ' + agent.binaryPath,
+    'COPY ' + NATIVE_CONTRACT.agentRoot + '/' + agent.name + '/' + NATIVE_CONTRACT.launcher + ' ' + agent.binaryPath,
     'COPY ' + NATIVE_CONTRACT.agentRoot + '/' + agent.name + '/' + NATIVE_CONTRACT.start + ' /usr/local/bin/nemoclaw-start',
     'RUN chmod 0444 ' + agent.harnessPath + ' && chmod 0755 ' + agent.binaryPath + ' /usr/local/bin/nemoclaw-start && chown root:root ' + agent.harnessPath + ' ' + agent.binaryPath + ' /usr/local/bin/nemoclaw-start',
     'USER ' + SANDBOX_UID + ':' + SANDBOX_UID,
@@ -190,7 +221,7 @@ export function renderNativeHarness(input) {
     '// ' + NOTICE,
     '// Deterministic starter harness for agent "' + agent.name + '". It echoes input; it is not an LLM.',
     'let task = process.argv.slice(2).join(" ");',
-    'if (task === "smoke") {',
+    'if (task === "--smoke") {',
     '  process.stdout.write("NEMO_SMOKE_OK\\n");',
     '  process.exit(0);',
     '}',
@@ -253,7 +284,7 @@ export function renderNativePackage(input) {
     [NATIVE_CONTRACT.policy]: renderNativePolicy(agent),
     [NATIVE_CONTRACT.dockerfile]: renderNativeDockerfile(agent),
     [NATIVE_CONTRACT.start]: renderNativeStart(agent),
-    'launcher.sh': renderNativeLauncher(agent),
+    [NATIVE_CONTRACT.launcher]: renderNativeLauncher(agent),
     [NATIVE_CONTRACT.harness]: renderNativeHarness(agent),
     'dependency-review.md': renderNativeDependencyReview(agent),
     [NATIVE_CONTRACT.metadata]: renderNativeMetadata(agent),
@@ -278,6 +309,29 @@ export async function assertNativeCheckout(nemoclawRoot) {
     fail('NOT_A_CHECKOUT', 'The supplied path is not a NemoClaw source checkout');
   }
   return root;
+}
+
+/**
+ * Every required entry must be a regular file. Existence alone would let a
+ * directory or symlink pass validation and fail later, inside the image build.
+ */
+async function assertNativePackageFiles(directory) {
+  for (const required of NATIVE_REQUIRED_FILES) {
+    let entry;
+    try { entry = await lstat(path.join(directory, required)); }
+    catch { fail('INVALID_PACKAGE', 'Native agent package is missing ' + required); }
+    if (!entry.isFile()) fail('INVALID_PACKAGE', 'Native agent package entry is not a regular file: ' + required);
+  }
+}
+
+function isSameOrInside(parent, child) {
+  const relative = path.relative(parent, child);
+  return relative === '' || (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative));
+}
+
+async function canonicalOrNull(target) {
+  try { return await realpath(target); }
+  catch { return null; }
 }
 
 /** Create a native agent package. The destination must not already exist. */
@@ -309,9 +363,8 @@ export async function readNativePackage(directory) {
   if (metadata.packVersion !== NATIVE_PACK_VERSION) fail('INVALID_PACKAGE', 'Unsupported native agent package version');
   const name = metadata.agent?.name;
   if (typeof name !== 'string' || !AGENT_NAME.test(name)) fail('INVALID_PACKAGE', 'Invalid agent name in package metadata');
-  for (const required of [NATIVE_CONTRACT.manifest, NATIVE_CONTRACT.policy, NATIVE_CONTRACT.dockerfile, NATIVE_CONTRACT.start, NATIVE_CONTRACT.harness]) {
-    if (!(await exists(path.join(target, required)))) fail('INVALID_PACKAGE', 'Native agent package is missing ' + required);
-  }
+  if (RESERVED_AGENT_NAMES.includes(name)) fail('INVALID_PACKAGE', 'Reserved agent name in package metadata: ' + name);
+  await assertNativePackageFiles(target);
   return { directory: target, agent: metadata.agent, metadata };
 }
 
@@ -319,18 +372,55 @@ export async function readNativePackage(directory) {
  * Install a native agent package into a NemoClaw source checkout. NemoClaw's
  * loader scans <checkout>/agents for directories that contain manifest.yaml,
  * so placing the package there is the upstream registration step.
+ *
+ * Nothing installed is deleted before the replacement is complete: the copy
+ * lands in a staging directory under agents/, and only a fully staged package
+ * is swapped in, with the previous directory restored if the swap fails.
  */
 export async function installNativeAgent(directory, { nemoclawRoot, replace = false } = {}) {
   if (!nemoclawRoot) fail('USAGE', 'A NemoClaw source checkout is required');
   const pack = await readNativePackage(directory);
   const root = await assertNativeCheckout(nemoclawRoot);
   const target = nativeAgentDir(root, pack.agent.name);
-  if (await exists(target)) {
+  const source = await realpath(pack.directory);
+  const previous = await canonicalOrNull(target);
+
+  if (previous !== null) {
+    if (isSameOrInside(source, previous) || isSameOrInside(previous, source)) {
+      fail('SAME_PATH', 'The package directory and the installed agent directory overlap; nothing was changed');
+    }
     if (!replace) fail('DESTINATION_EXISTS', 'That agent is already installed; pass --replace to overwrite it');
-    await rm(target, { recursive: true, force: true });
+    if (!(await exists(path.join(target, NATIVE_CONTRACT.metadata)))) {
+      fail('NOT_SDK_PACKAGE', 'Refusing to replace an agent directory this SDK did not install; remove it yourself if that is intended');
+    }
   }
-  await cp(pack.directory, target, { recursive: true, errorOnExist: true, force: false });
-  return { agentDir: target, name: pack.agent.name, upstream: NATIVE_CONTRACT.upstream, revision: NATIVE_CONTRACT.revision };
+
+  // The staging directory sits one level below agents/ so a partial package can
+  // never be mistaken for an installed one: the loader only scans agents/*/.
+  const stagingRoot = await mkdtemp(path.join(path.dirname(target), '.nha-install-'));
+  const staged = path.join(stagingRoot, pack.agent.name);
+  const backup = path.join(stagingRoot, 'previous');
+  let preserveStaging = false;
+  try {
+    await cp(source, staged, { recursive: true, errorOnExist: true, force: false });
+    await assertNativePackageFiles(staged);
+    if (previous !== null) await rename(target, backup);
+    try {
+      await rename(staged, target);
+    } catch (error) {
+      if (previous !== null) {
+        try { await rename(backup, target); }
+        catch {
+          preserveStaging = true;
+          fail('INSTALL_FAILED', 'Install failed and the previous package could not be restored; it is preserved at ' + backup);
+        }
+      }
+      throw error;
+    }
+    return { agentDir: target, name: pack.agent.name, upstream: NATIVE_CONTRACT.upstream, revision: NATIVE_CONTRACT.revision };
+  } finally {
+    if (!preserveStaging) await rm(stagingRoot, { recursive: true, force: true });
+  }
 }
 
 /** The probe NemoClaw runs to prove its loader accepts the installed agent. */
@@ -388,15 +478,37 @@ export async function verifyNativeAgent({ nemoclawRoot, name, timeoutMs = 120000
   try {
     const child = spawn(process.execPath, [probe, name], { cwd: root, shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
     const out = [];
-    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
-    child.stdout.on('data', (chunk) => out.push(chunk));
-    const code = await new Promise((resolve, reject) => {
-      child.once('error', () => reject(new AdapterError('VERIFY_FAILED', 'Cannot execute the NemoClaw checkout')));
-      child.once('close', resolve);
-    }).finally(() => clearTimeout(timer));
+    let stdoutBytes = 0;
+    let exceeded = false;
+    let stderrTail = '';
+    child.stdout.on('data', (chunk) => {
+      if (exceeded) return;
+      stdoutBytes += chunk.length;
+      if (stdoutBytes > VERIFY_MAX_BYTES) { exceeded = true; child.kill('SIGKILL'); return; }
+      out.push(chunk);
+    });
+    // stderr has to be drained even though it is not part of the report: an
+    // unread pipe can block the probe before it writes anything.
+    child.stderr.on('data', (chunk) => {
+      if (stderrTail.length < 4096) stderrTail += chunk.toString('utf8');
+    });
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs);
+    let code;
+    try {
+      code = await new Promise((resolve, reject) => {
+        child.once('error', () => reject(new AdapterError('VERIFY_FAILED', 'Cannot execute the NemoClaw checkout')));
+        child.once('close', resolve);
+      });
+    } finally { clearTimeout(timer); }
+    if (timedOut) fail('TIMEOUT', 'The NemoClaw loader probe exceeded ' + String(timeoutMs) + 'ms');
+    if (exceeded) fail('OUTPUT_LIMIT', 'The NemoClaw loader probe exceeded ' + String(VERIFY_MAX_BYTES) + ' bytes of output');
     let report;
     try { report = JSON.parse(Buffer.concat(out).toString('utf8').trim()); }
-    catch { fail('VERIFY_FAILED', 'The NemoClaw loader probe produced no usable report (exit ' + String(code) + ')'); }
+    catch {
+      const detail = stderrTail.trim().split(String.fromCharCode(10)).slice(-3).join(' ');
+      fail('VERIFY_FAILED', 'The NemoClaw loader probe produced no usable report (exit ' + String(code) + ')' + (detail ? ': ' + detail : ''));
+    }
     return report;
   } finally {
     await rm(workspace, { recursive: true, force: true });

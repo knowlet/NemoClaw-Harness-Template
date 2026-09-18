@@ -1,13 +1,15 @@
 /** UNOFFICIAL tests for NemoClaw-native agent packaging. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
 import {
   NATIVE_CONTRACT, NATIVE_PACK_VERSION, defineNativeAgent, renderNativeDockerfile, renderNativeHarness,
   renderNativeManifest, renderNativeMetadata, renderNativePackage, renderNativePolicy, renderNativeStart,
-  nativeAgentDir, nativeVerifySource, scaffoldNativeAgent, readNativePackage, installNativeAgent,
+  nativeAgentDir, nativeVerifySource, NATIVE_REQUIRED_FILES, scaffoldNativeAgent, readNativePackage, installNativeAgent,
   assertNativeCheckout, verifyNativeAgent,
 } from '../src/index.mjs';
 
@@ -148,6 +150,103 @@ test('verifyNativeAgent refuses an unbuilt or invalid request', async () => {
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+
+test('reserved names are refused wherever they can enter', async () => {
+  const reserved = ['node', 'nemoclaw-start', 'openclaw', 'hermes', 'pi', 'nemocua', 'langchain-deepagents-code'];
+  for (const name of reserved) assert.throws(() => defineNativeAgent({ name }), /reserved/);
+  const root = await tempDir();
+  try {
+    const checkout = await fakeCheckout(path.join(root, 'NemoClaw'));
+    const pack = path.join(root, 'renamed');
+    await scaffoldNativeAgent(pack, { name: 'safe-name' });
+    const metadata = JSON.parse(await readFile(path.join(pack, NATIVE_CONTRACT.metadata), 'utf8'));
+    metadata.agent.name = 'openclaw';
+    await writeFile(path.join(pack, NATIVE_CONTRACT.metadata), JSON.stringify(metadata));
+    await assert.rejects(() => readNativePackage(pack), (error) => error.code === 'INVALID_PACKAGE');
+    await assert.rejects(() => installNativeAgent(pack, { nemoclawRoot: checkout }), (error) => error.code === 'INVALID_PACKAGE');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('every required file is validated, including the launcher', async () => {
+  const root = await tempDir();
+  try {
+    for (const required of NATIVE_REQUIRED_FILES) {
+      const pack = path.join(root, 'missing-' + String(NATIVE_REQUIRED_FILES.indexOf(required)));
+      await scaffoldNativeAgent(pack, { name: 'pkg' });
+      await rm(path.join(pack, required));
+      await assert.rejects(() => readNativePackage(pack), (error) => error.code === 'INVALID_PACKAGE', required);
+    }
+    const pack = path.join(root, 'launcher-directory');
+    await scaffoldNativeAgent(pack, { name: 'pkg' });
+    await rm(path.join(pack, NATIVE_CONTRACT.launcher));
+    await mkdir(path.join(pack, NATIVE_CONTRACT.launcher));
+    await assert.rejects(() => readNativePackage(pack), (error) => error.code === 'INVALID_PACKAGE');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('install refuses a same-path package and keeps the installed one', async () => {
+  const root = await tempDir();
+  try {
+    const checkout = await fakeCheckout(path.join(root, 'NemoClaw'));
+    const pack = path.join(root, 'my-harness');
+    await scaffoldNativeAgent(pack, { name: 'my-harness' });
+    const installed = await installNativeAgent(pack, { nemoclawRoot: checkout });
+    await writeFile(path.join(installed.agentDir, 'KEEP.txt'), 'keep' + String.fromCharCode(10));
+    await assert.rejects(() => installNativeAgent(installed.agentDir, { nemoclawRoot: checkout, replace: true }), (error) => error.code === 'SAME_PATH');
+    assert.ok((await readdir(installed.agentDir)).includes('KEEP.txt'));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('install never replaces an agent directory this SDK did not write', async () => {
+  const root = await tempDir();
+  try {
+    const checkout = await fakeCheckout(path.join(root, 'NemoClaw'));
+    const foreign = path.join(checkout, 'agents', 'handwritten');
+    await mkdir(foreign, { recursive: true });
+    await writeFile(path.join(foreign, NATIVE_CONTRACT.manifest), 'name: handwritten' + String.fromCharCode(10) + '# UNTOUCHED' + String.fromCharCode(10));
+    const pack = path.join(root, 'handwritten');
+    await scaffoldNativeAgent(pack, { name: 'handwritten' });
+    await assert.rejects(() => installNativeAgent(pack, { nemoclawRoot: checkout, replace: true }), (error) => error.code === 'NOT_SDK_PACKAGE');
+    assert.ok((await readFile(path.join(foreign, NATIVE_CONTRACT.manifest), 'utf8')).includes('UNTOUCHED'));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('install stages the replacement and leaves no staging directory behind', async () => {
+  const root = await tempDir();
+  try {
+    const checkout = await fakeCheckout(path.join(root, 'NemoClaw'));
+    const pack = path.join(root, 'my-harness');
+    await scaffoldNativeAgent(pack, { name: 'my-harness' });
+    await installNativeAgent(pack, { nemoclawRoot: checkout });
+    const replaced = await installNativeAgent(pack, { nemoclawRoot: checkout, replace: true });
+    assert.ok((await readdir(replaced.agentDir)).includes(NATIVE_CONTRACT.launcher));
+    assert.deepEqual((await readdir(path.join(checkout, 'agents'))).sort(), ['my-harness']);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('verify reports a timeout instead of a generic failure', async () => {
+  const root = await tempDir();
+  try {
+    const checkout = await fakeCheckout(path.join(root, 'NemoClaw'));
+    const hang = 'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60000);';
+    for (const file of ['dist/lib/agent/defs.js', 'dist/lib/agent/onboard.js', 'dist/lib/onboard/workload/source.js']) {
+      const entry = path.join(checkout, file);
+      await mkdir(path.dirname(entry), { recursive: true });
+      await writeFile(entry, file.endsWith('defs.js') ? hang : 'module.exports = {};');
+    }
+    await assert.rejects(
+      () => verifyNativeAgent({ nemoclawRoot: checkout, name: 'my-harness', timeoutMs: 500 }),
+      (error) => error.code === 'TIMEOUT',
+    );
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('the CLI requires a value for --json', () => {
+  const cli = fileURLToPath(new URL('../bin/nha.mjs', import.meta.url));
+  const result = spawnSync(process.execPath, [cli, 'native', 'verify', '--nemoclaw', '/nonexistent', '--name', 'x', '--json'], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Missing option value/);
+});
 test('nativeAgentDir stays inside the checkout agents directory', () => {
   assert.equal(nativeAgentDir('/tmp/NemoClaw', 'my-harness'), path.join('/tmp/NemoClaw', 'agents', 'my-harness'));
 });

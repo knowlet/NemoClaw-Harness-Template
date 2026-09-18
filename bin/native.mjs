@@ -3,7 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { AdapterError, NOTICE, NATIVE_CONTRACT, scaffoldNativeAgent, installNativeAgent, verifyNativeAgent } from '../src/index.mjs';
 
-const BOOLEAN_FLAGS = new Set(['replace', 'help', 'json']);
+const BOOLEAN_FLAGS = new Set(['replace', 'help']);
 const VALUE_FLAGS = new Set(['name', 'nemoclaw', 'display-name', 'description', 'harness', 'model', 'json']);
 
 function parse(args) {

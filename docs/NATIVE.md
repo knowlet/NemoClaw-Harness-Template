@@ -38,6 +38,19 @@ Other revisions may rename, add, or reject fields. Re-verify after any upstream 
 The package contains `manifest.yaml`, `policy-additions.yaml`, `Dockerfile`, `start.sh`, `launcher.sh`,
 `harness.mjs`, `dependency-review.md`, and `native-agent.json`.
 
+Those six files — manifest, policy, Dockerfile, start script, harness, and launcher — are `NATIVE_REQUIRED_FILES`. Every command validates that each one exists **as a regular file**, so a missing or replaced entry fails before anything is installed instead of during the image build.
+
+### Installing and replacing
+
+`native install` is staged, not destructive:
+
+- The package is copied into a staging directory under `agents/` and re-validated there.
+- Only then is the previous directory moved aside and the staged package renamed into place.
+- If the swap fails, the previous package is restored. If it cannot be restored, it is preserved and its path is reported.
+- Nothing installed is ever deleted before a complete replacement exists on disk.
+
+`--replace` only overwrites a directory this SDK installed (one that carries `native-agent.json`). A hand-written agent, or one shipped by NemoClaw, is refused with `NOT_SDK_PACKAGE` rather than silently deleted. Installing a package over itself is refused with `SAME_PATH` and changes nothing.
+
 ## What each command proves, and what it does not
 
 `native verify` runs the **real compiled loader** from the checkout you pass and reports what it
@@ -84,5 +97,7 @@ records the outcome in `reports/` instead of inferring it.
 - One pinned upstream revision. This is a source-checkout integration, not a stable extension API.
 - The generator emits a deterministic echo starter, not an LLM. Replace `harness.mjs` (and
   `runtime.headless_command`) with your runtime, then re-verify.
-- `native install` refuses to overwrite an existing agent unless you pass `--replace`.
+- `native install` refuses to overwrite an existing agent unless you pass `--replace`, and it replaces only directories this SDK installed.
+- Agent names are checked against a reserved list: `node` and `nemoclaw-start` would overwrite the interpreter and the entrypoint, and `openclaw`, `hermes`, `pi`, `nemocua`, and `langchain-deepagents-code` already own a directory under `agents/`.
+- `native verify` fails with `TIMEOUT` when the loader probe exceeds its deadline, and bounds the probe output.
 - The SDK never publishes, uploads, or pulls images, and it never registers anything with NVIDIA.

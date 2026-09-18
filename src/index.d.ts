@@ -111,8 +111,9 @@ export interface NativeAgentDefinition {
   readonly installDir: string;
   readonly harnessPath: string;
 }
-export declare const NATIVE_CONTRACT: Readonly<{ upstream: string; revision: string; agentRoot: string; manifest: string; policy: string; dockerfile: string; start: string; harness: string; metadata: string }>;
+export declare const NATIVE_CONTRACT: Readonly<{ upstream: string; revision: string; agentRoot: string; manifest: string; policy: string; dockerfile: string; start: string; harness: string; launcher: string; metadata: string }>;
 export declare const NATIVE_PACK_VERSION: number;
+export declare const NATIVE_REQUIRED_FILES: readonly string[];
 export declare function defineNativeAgent(input?: Partial<NativeAgentInput>): NativeAgentDefinition;
 export declare function renderNativeManifest(input?: Partial<NativeAgentInput>): string;
 export declare function renderNativePolicy(input?: Partial<NativeAgentInput>): string;
