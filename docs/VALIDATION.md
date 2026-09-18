@@ -48,6 +48,8 @@ Two real defects surfaced only in this end-to-end run and are fixed in the gener
 
 The quickstart runner (scripts/quickstart.mjs) then completed in reuse mode against that checkout on aarch64: preflight, OpenShell install, native init/install/verify, real onboarding, and in-sandbox execution all succeeded, ending in QUICKSTART OK with the sandbox deleted afterwards. A first attempt failed on a stale gateway process from an earlier run still holding port 8080; that case is now in the quickstart troubleshooting section.
 
+Run [35332873049](https://github.com/knowlet/NemoClaw-Harness-Template/actions/runs/35332873049) on commit 748f446 is the clean-room proof: on a fresh Ubuntu 24.04 runner, with a fail-fast check that no NemoClaw state existed, the documented quickstart built agents/my-harness, onboarding reported "my-harness terminal runtime is ready", the sandbox returned "Echo: NHA_NATIVE_OK", and the sandbox was deleted. SDK checks [35332873027](https://github.com/knowlet/NemoClaw-Harness-Template/actions/runs/35332873027) and runtime integration [35332873019](https://github.com/knowlet/NemoClaw-Harness-Template/actions/runs/35332873019) passed for the same commit.
+
 Runtime integration run [35326474616](https://github.com/knowlet/NemoClaw-Harness-Template/actions/runs/35326474616) on commit `c3af650` passed every recorded check on a GitHub-hosted Ubuntu 24.04 Docker runner (`cli`, `native_loader`, `onboard`, `native`, `byoc`, `embedded` all `success`). That run builds the pinned NemoClaw CLI, installs checksum-verified OpenShell 0.0.116, verifies the generated agent against the real loader, onboards it, executes the harness inside the sandbox, and then runs the OpenShell BYOC path.
 
 ## Native packaging review round
