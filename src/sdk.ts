@@ -84,7 +84,7 @@ export function createAdapter(name = 'my-harness', model = 'managed-model') {
   return defineAdapter({
     apiVersion: API_VERSION, kind: 'HarnessAdapter',
     metadata: { name, displayName: name, unofficial: true },
-    runtime: { command: ['/usr/local/bin/node', '/opt/nha/agent.js'], taskInput: 'stdin', timeoutMs: 120000, maxOutputBytes: 1048576 },
+    runtime: { command: ['/usr/local/bin/node', '/opt/nha/agent.mjs'], taskInput: 'stdin', timeoutMs: 120000, maxOutputBytes: 1048576 },
     inference: { baseUrl: INFERENCE_URL, model },
     state: { home: '/sandbox/.harness', workspace: '/sandbox/workspace', persist: ['sessions'], reconstruct: ['cache'], prohibit: ['settings.yaml', '.credentials.yaml', 'plugins', 'profiles', 'cordis.patch.yml'] },
     env: {},
@@ -263,5 +263,5 @@ export function buildOpenShellCommand({ name, image, policy, task, allowMutableI
   } else assertImageDigest(image);
   if (!text(policy) || policy.startsWith('-') || /[\r\n]/.test(policy)) throw new AdapterError('INVALID_POLICY', 'A policy path is required');
   if (!text(task, 16384) || Buffer.byteLength(task) > 16384) throw new AdapterError('INVALID_TASK', 'A task is required and must fit in 16 KiB');
-  return ['openshell', 'sandbox', 'create', '--name', name, '--from', image, '--policy', path.resolve(policy), '--', '/usr/local/bin/node', '/opt/nha/bin/nha.js', 'exec', '/etc/nha/adapter.json', '--managed', '--task', task];
+  return ['openshell', 'sandbox', 'create', '--name', name, '--from', image, '--policy', path.resolve(policy), '--', '/usr/local/bin/node', '/opt/nha/bin/nha.mjs', 'exec', '/etc/nha/adapter.json', '--managed', '--task', task];
 }
