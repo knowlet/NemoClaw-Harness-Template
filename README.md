@@ -45,7 +45,7 @@ my-harness/
 
 ## Install the SDK in another project
 
-The package name is **`@knowlet/nemoclaw-harness-sdk`**, version `0.2.0`. **No npm registry publication is implied.** Build the installable tarball from this checkout:
+The package name is **`@knowlet/nemoclaw-harness-sdk`**, version `0.3.0`. **No npm registry publication is implied.** Build the installable tarball from this checkout:
 
 ```bash
 npm run pack:sdk
@@ -118,6 +118,32 @@ Without `--dev-image`, `plan` and `launch` reject images that are not `image@sha
 
 OpenShell replaces OCI `ENTRYPOINT`; the planner explicitly supplies the process after `--`, as required by the upstream [BYOC contract](https://github.com/NVIDIA/OpenShell/blob/c502be9fd73c41bab25f0a88587b7a3d90c96b55/examples/bring-your-own-container/README.md).
 
+## Package a harness as a native NemoClaw agent
+
+The BYOC path above hands an image to OpenShell yourself. The native path instead writes the
+`agents/<name>/` directory that the NemoClaw CLI scans during onboarding, so
+`nemoclaw onboard --agent <name>` manages the runtime.
+
+```bash
+node bin/nha.mjs native init ./my-harness --name my-harness --model your-managed-model
+node bin/nha.mjs native install ./my-harness --nemoclaw ../NemoClaw
+node bin/nha.mjs native verify --nemoclaw ../NemoClaw --name my-harness
+```
+
+The generated package contains `manifest.yaml`, `policy-additions.yaml`, `Dockerfile`,
+`start.sh`, `harness.mjs`, `dependency-review.md`, and `native-agent.json`. NemoClaw builds
+that Dockerfile itself on the Docker driver and enforces the generated deny-by-default policy.
+
+`native verify` runs the real compiled loader from the checkout and reports `listed`,
+`loaderAccepted`, and the resolved Dockerfile. It always reports `deploymentVerified: false`:
+loader acceptance is not a deployment. A real deployment — image build, sandbox creation, and task
+execution inside the sandbox — is recorded by the runtime workflow, not inferred by this command.
+
+Native packaging targets one pinned upstream revision,
+`NVIDIA/NemoClaw@1eb370f20530bd1312ac86a27782ef8501b28ade`, and that `agents/` layout is internal
+to the revision rather than a public NVIDIA extension API. See the
+[native packaging guide](docs/NATIVE.md).
+
 ## What is implemented, and what is not
 
 | Surface | Status |
@@ -127,7 +153,8 @@ OpenShell replaces OCI `ENTRYPOINT`; the planner explicitly supplies the process
 | Inference wire handling and failure cases | Tested against local HTTP fixtures; no live model claim |
 | OCI build inputs and OpenShell command generation | Generated and structurally tested; needs live deployment qualification |
 | DeepSeek headless integration | **Experimental**, source-reviewed, no bundled DSH runtime or live E2E qualification |
-| Official NemoClaw discovery, onboarding, lifecycle/recovery integration | **Not implemented; no public extension compatibility promise** |
+| Native `agents/<name>/` packaging for one pinned NemoClaw revision | Generated, with loader acceptance and workload selection verified against the real checkout |
+| Other NemoClaw-managed operations (snapshots, recovery, lifecycle verbs) | **Not implemented; no public extension compatibility promise** |
 | Web UI authentication, streaming, snapshot/restore, automatic policy approval | Not implemented |
 
 State `persist`, `reconstruct`, and `prohibit` entries are **validated declarations**, not an implemented backup engine. Filesystem/network enforcement belongs to OpenShell. An untrusted executable can bypass this SDK from inside its sandbox; do not treat our launcher as the outer security boundary.

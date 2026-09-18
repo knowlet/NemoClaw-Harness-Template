@@ -92,3 +92,40 @@ export * from './testing.js';
 export interface OpenShellPlan { create: string[]; ready: string[]; execute: string[] }
 export declare function buildOpenShellPlan(options: OpenShellOptions): OpenShellPlan;
 export declare function launchOpenShell(options: OpenShellOptions, controls?: { signal?: AbortSignal }): Promise<{ name: string; taskSucceeded: true }>;
+
+export interface NativeAgentInput {
+  name: string;
+  displayName?: string;
+  description?: string;
+  model?: string;
+  harness?: 'echo' | 'external';
+}
+export interface NativeAgentDefinition {
+  readonly name: string;
+  readonly harness: 'echo' | 'external';
+  readonly displayName: string;
+  readonly description: string;
+  readonly model: string;
+  readonly home: string;
+  readonly stateDir: string;
+  readonly installDir: string;
+  readonly harnessPath: string;
+}
+export declare const NATIVE_CONTRACT: Readonly<{ upstream: string; revision: string; agentRoot: string; manifest: string; policy: string; dockerfile: string; start: string; harness: string; metadata: string }>;
+export declare const NATIVE_PACK_VERSION: number;
+export declare function defineNativeAgent(input?: Partial<NativeAgentInput>): NativeAgentDefinition;
+export declare function renderNativeManifest(input?: Partial<NativeAgentInput>): string;
+export declare function renderNativePolicy(input?: Partial<NativeAgentInput>): string;
+export declare function renderNativeDockerfile(input?: Partial<NativeAgentInput>): string;
+export declare function renderNativeStart(input?: Partial<NativeAgentInput>): string;
+export declare function renderNativeHarness(input?: Partial<NativeAgentInput>): string;
+export declare function renderNativeDependencyReview(input?: Partial<NativeAgentInput>): string;
+export declare function renderNativeMetadata(input?: Partial<NativeAgentInput>): string;
+export declare function renderNativePackage(input?: Partial<NativeAgentInput>): Readonly<Record<string, string>>;
+export declare function nativeAgentDir(nemoclawRoot: string, name: string): string;
+export declare function assertNativeCheckout(nemoclawRoot: string): Promise<string>;
+export declare function scaffoldNativeAgent(destination: string, input?: Partial<NativeAgentInput>): Promise<{ directory: string; files: string[]; agent: NativeAgentDefinition }>;
+export declare function readNativePackage(directory: string): Promise<{ directory: string; agent: Record<string, unknown>; metadata: Record<string, unknown> }>;
+export declare function installNativeAgent(directory: string, options: { nemoclawRoot: string; replace?: boolean }): Promise<{ agentDir: string; name: string; upstream: string; revision: string }>;
+export declare function nativeVerifySource(): string;
+export declare function verifyNativeAgent(options: { nemoclawRoot: string; name: string; timeoutMs?: number }): Promise<Record<string, unknown>>;

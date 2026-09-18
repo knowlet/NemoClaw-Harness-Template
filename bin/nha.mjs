@@ -12,8 +12,8 @@ function parse(args) {
     const value = args[i];
     if (!value.startsWith('--')) { positional.push(value); continue; }
     const key = value.slice(2);
-    if (!['managed', 'allow-host', 'dev-image', 'name', 'model', 'image', 'policy', 'task', 'task-file', 'output', 'help', 'version'].includes(key) || key in flags) throw new AdapterError('USAGE', 'Unknown or repeated option');
-    if (['managed', 'allow-host', 'dev-image', 'help', 'version'].includes(key)) flags[key] = true;
+    if (!['managed', 'allow-host', 'dev-image', 'name', 'model', 'image', 'policy', 'task', 'task-file', 'output', 'help', 'version', 'nemoclaw', 'replace', 'display-name', 'description', 'harness', 'json'].includes(key) || key in flags) throw new AdapterError('USAGE', 'Unknown or repeated option');
+    if (['managed', 'allow-host', 'dev-image', 'help', 'version', 'replace', 'json'].includes(key)) flags[key] = true;
     else {
       if (args[i + 1] === undefined) throw new AdapterError('USAGE', 'Missing option value');
       flags[key] = args[++i];
@@ -22,10 +22,11 @@ function parse(args) {
   return { positional, flags };
 }
 function help() {
-  console.log(`${NOTICE}\n\nUsage: nha <command>\n  demo                              Run a deterministic local echo (no sandbox/LLM)\n  init <directory> [--name NAME] [--model MODEL]\n  validate <adapter.json>\n  render <adapter.json> --output NEW_DIRECTORY\n  exec <adapter.json> (--managed | --allow-host) (--task TEXT | --task-file FILE)\n  plan --name NAME --image IMAGE --policy FILE --task TEXT [--dev-image]\n  launch <same arguments as plan>    Explicitly execute the OpenShell BYOC command\n  test <suite.json> --adapter FILE (--allow-host | --managed) [--json FILE] [--junit FILE]\n  doctor                            Check local prerequisites; no changes\n  --version\n\nThis SDK does not register agents with official NemoClaw onboarding.\n`);
+  console.log(`${NOTICE}\n\nUsage: nha <command>\n  demo                              Run a deterministic local echo (no sandbox/LLM)\n  init <directory> [--name NAME] [--model MODEL]\n  validate <adapter.json>\n  render <adapter.json> --output NEW_DIRECTORY\n  exec <adapter.json> (--managed | --allow-host) (--task TEXT | --task-file FILE)\n  plan --name NAME --image IMAGE --policy FILE --task TEXT [--dev-image]\n  launch <same arguments as plan>    Explicitly execute the OpenShell BYOC command\n  native init|install|verify ...      Package a harness as a NemoClaw-native agents/<name> runtime\n  test <suite.json> --adapter FILE (--allow-host | --managed) [--json FILE] [--junit FILE]\n  doctor                            Check local prerequisites; no changes\n  --version\n\nNative packaging targets one pinned NemoClaw revision and never publishes anything.\n`);
 }
 async function main() {
   if (process.argv[2] === 'test') { const { testCommand } = await import('./test.mjs'); return testCommand(process.argv.slice(3)); }
+  if (process.argv[2] === 'native') { const { nativeCommand } = await import('./native.mjs'); return nativeCommand(process.argv.slice(3)); }
   const { positional, flags } = parse(process.argv.slice(2));
   const [command, filename] = positional;
   if (flags.version) { console.log(`nha ${VERSION} — ${NOTICE}`); return; }

@@ -31,7 +31,7 @@ printf 'hello' | node agent.mjs
 
 ## SDK 安裝
 
-套件名稱為 `@knowlet/nemoclaw-harness-sdk`，版本 `0.2.0`；**本專案不宣稱已發布到 npm registry**。
+套件名稱為 `@knowlet/nemoclaw-harness-sdk`，版本 `0.3.0`；**本專案不宣稱已發布到 npm registry**。
 
 ```bash
 npm run pack:sdk
@@ -86,12 +86,35 @@ node bin/nha.mjs launch --name my-harness --image my-harness:dev \
 
 `plan` 只輸出 argv；`launch` 才建立 OpenShell sandbox。未加 `--dev-image` 時必須提供 image digest。遠端 gateway 必須能從 registry 取得映像檔。echo 不需推論路由，真正的 LLM harness 則需要預先配置。
 
+## 打包成 NemoClaw 原生 agent
+
+上面的 BYOC 路徑由你自己把映像檔交給 OpenShell；原生路徑改為產生 NemoClaw CLI 在 onboarding
+時掃描的 `agents/<name>/` 目錄，讓 `nemoclaw onboard --agent <name>` 直接管理你的 harness。
+
+```bash
+node bin/nha.mjs native init ./my-harness --name my-harness --model your-managed-model
+node bin/nha.mjs native install ./my-harness --nemoclaw ../NemoClaw
+node bin/nha.mjs native verify --nemoclaw ../NemoClaw --name my-harness
+```
+
+產生的內容包含 `manifest.yaml`、`policy-additions.yaml`、`Dockerfile`、`start.sh`、
+`harness.mjs`、`dependency-review.md` 與 `native-agent.json`。NemoClaw 會在 Docker driver 上
+自行建置這個 Dockerfile，並套用產生的 deny-by-default policy。
+
+`native verify` 會載入 checkout 真正編譯出來的 loader，回報 `listed`、`loaderAccepted` 與解析到
+的 Dockerfile；它一律回報 `deploymentVerified: false`，因為 loader 接受設定不等於部署成功。真正
+的部署（建置映像檔、建立 sandbox、在 sandbox 內執行任務）由 runtime workflow 記錄，不由這個指令
+推論。
+
+原生打包鎖定單一上游版本 `NVIDIA/NemoClaw@1eb370f20530bd1312ac86a27782ef8501b28ade`；這個
+`agents/` 版面是該版本的內部結構，不是 NVIDIA 公開的擴充 API。詳見[原生打包說明](docs/NATIVE.md)。
+
 ## DeepSeek 範例與限制
 
 [DeepSeek candidate 文件](examples/deepseek/README.md) 提供 build-context generator、managed Cordis patch、唯讀 profile 與 headless launcher。範例鎖定 source review 版本，要求使用者提供已審查的 DSH image digest；**不捆綁 DSH，也沒有宣稱完成 live E2E**。
 
 特別處理了 `settings.yaml` 可能覆蓋模型路由的問題：不只加最後一層 patch，也停用 settings override，並禁止對整個 DSH_HOME 開放寫入。這仍不是完整插件權限驗證或安全認證。
 
-目前未實作官方 NemoClaw onboarding／lifecycle、Web UI 認證、snapshot／restore 或版本遷移。`persist`／`reconstruct`／`prohibit` 是經驗證的宣告，不是已實作的備份引擎。請查看[實際驗證紀錄](docs/VALIDATION.md)。
+其他 NemoClaw lifecycle（snapshot／restore、復原、各項動詞）、Web UI 認證與版本遷移尚未實作；原生 agent 打包只鎖定單一上游版本。`persist`／`reconstruct`／`prohibit` 是經驗證的宣告，不是已實作的備份引擎。請查看[實際驗證紀錄](docs/VALIDATION.md)。
 
 本專案採 [MIT](LICENSE)；第三方 harness 保留其原有授權。散布時請保留 [NOTICE](NOTICE)，不要宣稱 NVIDIA 官方支援。

@@ -33,6 +33,12 @@ jobs:
           npm --prefix nemoclaw ci --ignore-scripts --no-audit --no-fund
           npm run build:cli
           node bin/nemoclaw.js --version
+      - name: Verify a generated native agent against the real loader
+        id: native-loader
+        continue-on-error: true
+        run: |
+          mkdir -p reports
+          node scripts/integration/native-agent.mjs --nemoclaw .upstream/NemoClaw --name native-echo --json reports/native-loader.json
       - name: Install OpenShell v0.0.116 and verify checksum
         id: openshell
         run: |
@@ -68,6 +74,18 @@ jobs:
             if test -f "$log"; then grep -Ei 'error|warn|inference' "$log" | tail -n 25; fi
           fi
           exit "$rc"
+      - name: Onboard and execute the generated native agent in a real sandbox
+        id: native
+        if: ${{ !cancelled() && steps.openshell.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          NEMOCLAW_PROVIDER: custom
+          NEMOCLAW_MODEL: fixture-model
+          NEMOCLAW_PROVIDER_KEY: fixture-only-not-a-secret
+          NEMOCLAW_ENDPOINT_URL: http://host.openshell.internal:18080/v1
+        run: |
+          mkdir -p reports
+          node scripts/integration/native-agent.mjs --nemoclaw .upstream/NemoClaw --name native-echo --sandbox nha-native --deploy --json reports/native.json
       - name: Build generated adapter and test real OpenShell BYOC
         id: byoc
         if: ${{ !cancelled() && steps.openshell.outcome == 'success' }}
@@ -111,14 +129,16 @@ jobs:
         if: always()
         env:
           CLI_RESULT: ${{ steps.cli.outcome }}
+          NATIVE_LOADER_RESULT: ${{ steps.native-loader.outcome }}
           ONBOARD_RESULT: ${{ steps.onboard.outcome }}
+          NATIVE_RESULT: ${{ steps.native.outcome }}
           BYOC_RESULT: ${{ steps.byoc.outcome }}
           EMBEDDED_RESULT: ${{ steps.embedded.outcome }}
         run: |
           mkdir -p reports
           node --input-type=module -e '
             import fs from "node:fs";
-            const results = Object.fromEntries(["CLI", "ONBOARD", "BYOC", "EMBEDDED"].map(k => [k.toLowerCase(), process.env[k + "_RESULT"]]));
+            const results = Object.fromEntries(["CLI", "NATIVE_LOADER", "ONBOARD", "NATIVE", "BYOC", "EMBEDDED"].map(k => [k.toLowerCase(), process.env[k + "_RESULT"]]));
             const report = { unofficial: true, commit: process.env.GITHUB_SHA, nemoclawCommit: "1eb370f20530bd1312ac86a27782ef8501b28ade", openshell: "0.0.116", arch: process.arch, realModel: false, results };
             fs.writeFileSync("reports/deployment.json", JSON.stringify(report, null, 2) + "\n");
             console.log(JSON.stringify(report));
@@ -135,13 +155,15 @@ jobs:
           if command -v openshell >/dev/null; then
             openshell sandbox list || true
             openshell sandbox delete nha-integration || true
-            openshell sandbox delete nha-host || true
+            openshell sandbox delete nha-native || true
+          openshell sandbox delete nha-host || true
           fi
           if test -f "$RUNNER_TEMP/provider.pid"; then kill "$(cat "$RUNNER_TEMP/provider.pid")" || true; fi
       - name: Require all deployment checks to pass
         if: always()
         env:
           ONBOARD_RESULT: ${{ steps.onboard.outcome }}
+          NATIVE_RESULT: ${{ steps.native.outcome }}
           BYOC_RESULT: ${{ steps.byoc.outcome }}
           EMBEDDED_RESULT: ${{ steps.embedded.outcome }}
-        run: test "$ONBOARD_RESULT/$BYOC_RESULT/$EMBEDDED_RESULT" = success/success/success
+        run: test "$ONBOARD_RESULT/$NATIVE_RESULT/$BYOC_RESULT/$EMBEDDED_RESULT" = success/success/success/success

@@ -86,6 +86,10 @@ try {
 
 The fixture binds only to loopback on an ephemeral port and supports non-streaming Chat Completions and model listing. Replies may also be assistant messages with `tool_calls`, allowing deterministic tool-loop tests. The harness must execute the tool itself; the fixture does not. Exhausting the queue fails with HTTP 503. This is a mock model, not a real LLM or managed gateway.
 
+## Native agent verification
+
+`nha native verify --nemoclaw <checkout> --name <agent>` executes the checkout real compiled loader and reports `listed`, `loaderAccepted`, and the resolved Dockerfile. `loaderAccepted: true` means NemoClaw resolves the agent and selects its Dockerfile; it is not a deployment. Deployment evidence comes from the [runtime integration workflow](../.github/workflows/runtime-integration.yml), which onboards the agent, creates the sandbox, and executes the harness inside it.
+
 ## Reporting and assurance levels
 
 JSON/JUnit omit tasks, expected answers, stdout/stderr bodies, and exception messages. Reports retain case names, timings, stable error codes, sizes, and output hashes. Use non-sensitive names. Hashes are not anonymization of predictable low-entropy outputs.

@@ -1,6 +1,6 @@
 # SDK reference — UNOFFICIAL community contract
 
-Package: `@knowlet/nemoclaw-harness-sdk@0.2.0`. ESM only; TypeScript declarations ship with the package. This is not an NVIDIA SDK, and this package is not claimed to be published to npm. Install its `npm pack` tarball as described in the [README](../README.md).
+Package: `@knowlet/nemoclaw-harness-sdk@0.3.0`. ESM only; TypeScript declarations ship with the package. This is not an NVIDIA SDK, and this package is not claimed to be published to npm. Install its `npm pack` tarball as described in the [README](../README.md).
 
 ## Adapter schema
 
@@ -79,6 +79,12 @@ Development exceptions are limited to HTTP loopback hostnames with the `/v1` pat
 
 `buildOpenShellCommand({ name, image, policy, task, allowMutableImage? })` returns an argv array, never a shell string. By default it requires a digest reference. It does not contact a registry or verify signatures. The command uses the fixed managed entry paths supplied by the generated image.
 
+### Native NemoClaw packaging
+
+`renderNativePackage({ name, displayName?, description?, model?, harness? })` returns the file map for a native `agents/<name>/` package. `scaffoldNativeAgent` writes it exclusively, `readNativePackage` validates it, and `installNativeAgent` copies it into a NemoClaw checkout. `verifyNativeAgent({ nemoclawRoot, name })` executes that checkout real compiled loader and returns `listed`, `loaderAccepted`, `dockerfile`, `policyAdditions`, `workload`, and `deploymentVerified: false`.
+
+The layout is pinned to `NATIVE_CONTRACT.revision` and is internal to that upstream revision, not a public extension point. `readNativePackage` accepts only packages whose `native-agent.json` records this SDK pack format and version. See the [native packaging guide](NATIVE.md).
+
 `digest(value)` hashes a string or `JSON.stringify(value)` with SHA-256. It is useful for matching a particular serialized configuration, but it is **not canonical JSON hashing** and is not a signature or attestation.
 
 ## CLI
@@ -94,6 +100,9 @@ Development exceptions are limited to HTTP loopback hostnames with the `/v1` pat
 | `nha plan --name NAME --image IMAGE --policy FILE --task TEXT` | Output exact OpenShell argv, no external mutation |
 | `nha launch ...` | Execute that OpenShell command; creates a sandbox |
 | `nha doctor` | Check local binaries/version; not a compatibility or health certification |
+| `nha native init DIR --name NAME --model MODEL` | Write a NemoClaw-native `agents/<name>/` package on the local filesystem |
+| `nha native install DIR --nemoclaw CHECKOUT [--replace]` | Copy that package into a checkout agents/ directory |
+| `nha native verify --nemoclaw CHECKOUT --name NAME [--json FILE]` | Run the checkout real loader; reports loader acceptance, never deployment |
 
 `--managed` and `--allow-host` are mutually exclusive, as are `--task` and `--task-file`. Use `node bin/nha.mjs` from a source checkout, or `nha` after installing the package into a project with its local bin on PATH. Do not send secrets in task arguments: OS process listings may expose argv. The headless DSH upstream surface requires argv; that limitation is documented in its candidate.
 
@@ -105,4 +114,4 @@ This is a `0.x` community SDK with an explicitly alpha adapter schema. Pin the p
 
 ## Testing API
 
-Version 0.2.0 adds the `/testing` entry point and `nha test`. See [Harness test kit](TESTING.md) for versioned cases, framework bridges, JSON/JUnit output, and limitations.
+Version 0.3.0 adds NemoClaw-native agent packaging (`nha native`). Version 0.2.0 added the `/testing` entry point and `nha test`. See [Harness test kit](TESTING.md) for versioned cases, framework bridges, JSON/JUnit output, and limitations.
