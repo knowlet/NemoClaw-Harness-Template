@@ -1,5 +1,4 @@
 // TypeScript source of truth; declarations are emitted by tsc.
-// @ts-nocheck
 /** UNOFFICIAL OpenShell headless lifecycle: create a persistent sandbox, then explicitly exec a task. */
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
