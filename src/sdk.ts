@@ -5,6 +5,9 @@ import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, open, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import type {
+  AdapterManifest, RunOptions, RunResult, InferenceOptions, ChatMessage, ChatOptions,
+} from './types.js';
 
 export const VERSION = '0.3.0' as const;
 export const API_VERSION = 'harness-adapter.knowlet.dev/v1alpha1' as const;
@@ -13,14 +16,15 @@ export const PLACEHOLDER_TOKEN = 'openshell' as const;
 export const NOTICE = 'UNOFFICIAL / 非官方: independent community SDK; not affiliated with, endorsed by, or supported by NVIDIA or DeepSeek.';
 
 export class AdapterError extends Error {
-  constructor(code, message) {
+  readonly code: string;
+  constructor(code: string, message: string) {
     super(message);
     this.name = 'AdapterError';
     this.code = code;
   }
 }
-const fail = (message) => { throw new AdapterError('INVALID_MANIFEST', message); };
-const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+const fail = (message: string): never => { throw new AdapterError('INVALID_MANIFEST', message); };
+const record = (value: unknown): value is Record<string, any> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const text = (value, max = 4096) => typeof value === 'string' && value.length > 0 && value.length <= max && !value.includes('\0');
 function keys(value, allowed, label) {
   if (!record(value) || Object.keys(value).some((key) => !allowed.includes(key))) fail(`Invalid or unknown fields in ${label}`);
@@ -45,7 +49,7 @@ const CONFIG_ENV = /^(DSH_HOME|DSH_TELEMETRY_DISABLED|LANG|LC_ALL|NHA_CUSTOM_[A-
 const SECRET_NAME = /KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL/;
 
 /** Validate and defensively copy a data-only manifest. Commands are trusted executable input. */
-export function defineAdapter(input) {
+export function defineAdapter(input: AdapterManifest): Readonly<AdapterManifest> {
   keys(input, ['apiVersion', 'kind', 'metadata', 'runtime', 'inference', 'state', 'env'], 'manifest');
   if (input.apiVersion !== API_VERSION || input.kind !== 'HarnessAdapter') fail('Unsupported adapter schema');
   keys(input.metadata, ['name', 'displayName', 'unofficial'], 'metadata');
@@ -116,7 +120,7 @@ export async function assertManagedFile(filename) {
 }
 
 /** Only sandbox transport/trust variables survive; never forward ambient provider keys or loader hooks. */
-export function buildEnvironment(adapter, parent = process.env, home = adapter.state.home) {
+export function buildEnvironment(adapter: AdapterManifest, parent: Record<string, string | undefined> = process.env, home = adapter.state.home): Record<string, string> {
   adapter = defineAdapter(adapter);
   const env = { PATH: '/usr/local/bin:/usr/bin:/bin', LANG: 'C.UTF-8' };
   for (const key of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS']) {
@@ -130,7 +134,7 @@ export function buildEnvironment(adapter, parent = process.env, home = adapter.s
 }
 
 /** Execute a trusted harness command. This function DOES NOT create a sandbox. */
-export async function runHarness(input, task, options = {}) {
+export async function runHarness(input: AdapterManifest, task: string, options: RunOptions = {}): Promise<RunResult> {
   const adapter = defineAdapter(input);
   if (!text(task, 1048576) || Buffer.byteLength(task) > 1048576) throw new AdapterError('INVALID_TASK', 'Task must be a non-empty string <=1 MiB without NUL');
   if (adapter.runtime.taskInput === 'argv' && (task.startsWith('-') || Buffer.byteLength(task) > 16384)) throw new AdapterError('INVALID_TASK', 'argv tasks must not start with a dash and must fit in 16 KiB; use stdin for arbitrary input');
@@ -138,7 +142,7 @@ export async function runHarness(input, task, options = {}) {
   const argv = [...adapter.runtime.command];
   if (adapter.runtime.taskInput === 'argv') argv.push(task);
   const started = performance.now();
-  return new Promise((resolve, reject) => {
+  return new Promise<RunResult>((resolve, reject) => {
     const child = spawn(argv[0], argv.slice(1), {
       cwd: options.cwd ?? adapter.state.workspace,
       env: buildEnvironment(adapter, options.parentEnv ?? process.env, options.home ?? adapter.state.home),
@@ -147,7 +151,7 @@ export async function runHarness(input, task, options = {}) {
     let failure;
     let size = 0;
     let settled = false;
-    const stdout = [], stderr = [];
+    const stdout: Buffer[] = [], stderr: Buffer[] = [];
     const kill = () => {
       if (!child.pid) return;
       try { if (process.platform !== 'win32') process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch { /* Already reaped. */ }
@@ -158,14 +162,14 @@ export async function runHarness(input, task, options = {}) {
     const cleanup = () => { clearTimeout(timer); options.signal?.removeEventListener('abort', abort); };
     options.signal?.addEventListener('abort', abort, { once: true });
     if (options.signal?.aborted) abort();
-    const collect = (target) => (chunk) => {
+    const collect = (target: Buffer[]) => (chunk: Buffer) => {
       size += chunk.length;
       if (size > adapter.runtime.maxOutputBytes) stop('OUTPUT_LIMIT', 'Harness exceeded its combined stdout/stderr limit');
       else target.push(chunk);
     };
     child.stdout.on('data', collect(stdout));
     child.stderr.on('data', collect(stderr));
-    child.stdin.on('error', (error) => { if (error.code !== 'EPIPE') stop('STDIN_FAILED', 'Cannot deliver task to harness'); });
+    child.stdin.on('error', (error) => { if ((error as NodeJS.ErrnoException).code !== 'EPIPE') stop('STDIN_FAILED', 'Cannot deliver task to harness'); });
     child.once('error', () => {
       if (settled) return;
       settled = true; cleanup(); kill();
@@ -182,7 +186,7 @@ export async function runHarness(input, task, options = {}) {
   });
 }
 
-function inferenceEndpoint(baseUrl, development) {
+function inferenceEndpoint(baseUrl: string, development: boolean) {
   let url;
   try { url = new URL(baseUrl); } catch { throw new AdapterError('INVALID_ENDPOINT', 'Invalid inference endpoint'); }
   if (url.username || url.password || url.search || url.hash) throw new AdapterError('INVALID_ENDPOINT', 'Credentials, query strings, and fragments are forbidden in inference URLs');
@@ -192,13 +196,13 @@ function inferenceEndpoint(baseUrl, development) {
 }
 
 /** Bounded, non-streaming Chat Completions client. No upstream API key is accepted. */
-export function createInferenceClient({ model, baseUrl = INFERENCE_URL, development = false, timeoutMs = 120000, maxResponseBytes = 8388608 } = {}) {
+export function createInferenceClient({ model, baseUrl = INFERENCE_URL, development = false, timeoutMs = 120000, maxResponseBytes = 8388608 }: Partial<InferenceOptions> = {}) {
   if (!text(model, 256)) throw new AdapterError('INVALID_MODEL', 'A model is required');
   integer(timeoutMs, 1, 3600000, 'timeoutMs');
   integer(maxResponseBytes, 1, 16777216, 'maxResponseBytes');
   const endpoint = inferenceEndpoint(baseUrl, development);
   return Object.freeze({
-    async chat(messages, { signal, ...parameters } = {}) {
+    async chat(messages: ChatMessage[], { signal, ...parameters }: ChatOptions = {}) {
       if (!Array.isArray(messages) || messages.length === 0 || !messages.every((message) => record(message) && ['system', 'developer', 'user', 'assistant', 'tool'].includes(message.role))) throw new AdapterError('INVALID_MESSAGES', 'A non-empty messages array with valid roles is required');
       if (Object.keys(parameters).some((key) => !['temperature', 'max_tokens', 'max_completion_tokens', 'tools', 'tool_choice', 'response_format', 'seed', 'top_p'].includes(key))) throw new AdapterError('INVALID_PARAMETERS', 'Unsupported inference parameter; streaming and credential overrides are not accepted');
       const body = JSON.stringify({ ...parameters, model, messages, stream: false });
