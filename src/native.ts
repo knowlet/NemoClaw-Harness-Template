@@ -1,5 +1,4 @@
 // TypeScript source of truth; declarations are emitted by tsc.
-// @ts-nocheck
 /** UNOFFICIAL NemoClaw-native agent packaging. Not an NVIDIA extension API or product. */
 import { spawn } from 'node:child_process';
 import { cp, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
