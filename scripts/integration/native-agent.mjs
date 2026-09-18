@@ -53,7 +53,7 @@ try {
   if (!report.loaderAccepted) throw new Error('The NemoClaw loader rejected agent ' + name + ': ' + (verification.error ?? 'no detail'));
 
   if (flags.deploy) {
-    const onboard = await run(process.execPath, [cli, 'onboard', '--name', sandbox, '--agent', name, '--no-gpu', '--no-sandbox-gpu', '--non-interactive', '--yes', '--yes-i-accept-third-party-software', '--fresh'], { cwd: checkout });
+    const onboard = await run([process.execPath, cli, 'onboard', '--name', sandbox, '--agent', name, '--no-gpu', '--no-sandbox-gpu', '--non-interactive', '--yes', '--yes-i-accept-third-party-software', '--fresh'], { cwd: checkout });
     report.onboardExit = onboard.code;
     if (onboard.code !== 0) {
       // Do not forward arbitrary onboarding output: it can echo provider configuration.
@@ -62,7 +62,7 @@ try {
     }
     report.checks.push('onboard');
     // Use the manifest binary_path so this also proves the launcher NemoClaw requires.
-    const task = await run(process.execPath, [cli, sandbox, 'exec', '--', '/usr/local/bin/' + name, 'NHA_NATIVE_OK'], { cwd: checkout });
+    const task = await run([process.execPath, cli, sandbox, 'exec', '--', '/usr/local/bin/' + name, 'NHA_NATIVE_OK'], { cwd: checkout });
     report.execExit = task.code;
     report.deploymentVerified = task.code === 0 && task.stdout.includes('Echo: NHA_NATIVE_OK');
     if (report.deploymentVerified) report.checks.push('sandbox-exec');
