@@ -104,6 +104,13 @@ async function ensureNemoclaw(flags, workdir, env) {
   return checkout;
 }
 
+// The documented CLI path resolves to dist/, so a fresh clone needs a build first.
+function ensureSdkBuilt(env) {
+  if (existsSync(path.join(REPO, 'dist', 'bin', 'nha.js'))) return;
+  run('Install this SDK build dependencies', ['npm', 'ci', '--ignore-scripts'], { cwd: REPO, env, inherit: true });
+  run('Build this SDK and CLI from TypeScript', ['npm', 'run', 'build'], { cwd: REPO, env, inherit: true });
+}
+
 function ensureOpenShell(checkout, env) {
   const installer = path.join(checkout, 'scripts', 'install-openshell.sh');
   run('Install the checksum-pinned OpenShell CLI, gateway, and sandbox', ['bash', installer], {
@@ -209,6 +216,7 @@ async function main() {
     console.log([
       'Steps this runner performs, in order:',
       '  1. preflight: node >= 22.16, docker, git',
+      '  2. build this SDK from TypeScript when dist/ is absent',
       '  2. clone NVIDIA/NemoClaw and check out ' + REVISION,
       '  3. npm ci, npm --prefix nemoclaw ci, npm run build:cli',
       '  4. install the checksum-pinned OpenShell (scripts/install-openshell.sh)',
@@ -228,6 +236,7 @@ async function main() {
   preflight();
 
   const baseEnv = { ...process.env };
+  ensureSdkBuilt(baseEnv);
   const checkout = await ensureNemoclaw(flags, workdir, baseEnv);
   const openshell = ensureOpenShell(checkout, baseEnv);
   const env = { ...baseEnv, PATH: openshell.dir + path.delimiter + (baseEnv.PATH ?? '') };

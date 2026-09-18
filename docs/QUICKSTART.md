@@ -28,7 +28,7 @@ node scripts/quickstart.mjs --workdir /tmp/nha-quickstart
 
 That runner performs the whole tutorial in order and prints every command as it goes:
 
-1. checks Node, Docker, and git
+1. checks Node, Docker, and git (and builds this SDK from TypeScript if `dist/` is absent)
 2. clones `NVIDIA/NemoClaw` and checks out `1eb370f20530bd1312ac86a27782ef8501b28ade`, then runs
    `npm ci`, `npm --prefix nemoclaw ci`, and `npm run build:cli`
 3. installs the checksum-pinned OpenShell CLI, gateway, and sandbox through NemoClaw's own installer
