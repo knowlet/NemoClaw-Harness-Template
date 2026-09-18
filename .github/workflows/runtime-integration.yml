@@ -2,6 +2,7 @@ name: Runtime integration (unofficial)
 on:
   push:
     branches: [develop]
+  pull_request:
   workflow_dispatch:
 permissions:
   contents: read
