@@ -68,6 +68,19 @@ A review pass over commit `7f4f0b1` reported defects in the native packaging cod
 
 Regression tests cover each case, including a staging-directory check and a foreign-agent-directory check.
 
+## Native packaging: customization, cleanup, and artifact tests
+
+A review of `45b0a68` asked for a tested customization loop, cleanup that cannot report success after failing, and tests that ship with the artifact. This branch adds all three.
+
+| Gap | What changed | Evidence |
+| --- | --- | --- |
+| Editing the harness was described against the checkout copy while the reinstall read the package directory | The quickstart guide now states that the package directory is the only source you edit and that `agents/<name>/` inside the checkout is installed output, and it gives the loop in order: edit, test, `install --replace`, destroy, re-onboard | The guide leads the section with the rule instead of the file list |
+| Customization was never exercised, so a stale image could look like success | `--customize` changes the payload, keeps the package test passing, reinstalls, destroys, redeploys, and requires the sandbox to return the new output | Local aarch64 run finished with "V2 Echo: NHA_NATIVE_V2" and QUICKSTART OK; an unmodified payload would have returned the V1 string |
+| `--destroy` used `allowFailure` and never checked the exit code, and ran only on the success path | The destroy result is checked, an already-absent sandbox is treated as clean, a real failure fails the run, and cleanup now runs in `finally` so a failed deploy cannot leave a retained sandbox | A run with a deliberate failure in the customization step still deleted the sandbox before reporting the error |
+| The generated package shipped no test | It now ships `harness.test.mjs`, listed in `NATIVE_REQUIRED_FILES`, and the runner executes it before installing | `npm test` includes a regression that runs the generated test; the suite is 108 tests |
+
+The SDK and CLI sources on this branch are TypeScript: `npm run check` typechecks the implementation, builds `dist/`, and the package consumer imports the compiled layout. TypeScript and Node types are development-only, so the runtime stays dependency-free. `strict` is deliberately still off so language migration and type hardening stay separate changes.
+
 ## Limits
 
 No real-model quality benchmark, DeepSeek runtime boot, dual-architecture qualification, GPU inference, or lifecycle/snapshot/restore test is claimed. Native packaging registers one agent for one pinned NemoClaw revision; other NemoClaw-managed operations (snapshots, recovery, lifecycle verbs) remain unimplemented. Filesystem and egress security are established only for explicit assertions that actually passed, not by an SDK status flag.

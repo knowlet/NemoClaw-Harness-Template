@@ -36,9 +36,9 @@ Other revisions may rename, add, or reject fields. Re-verify after any upstream 
     node ../NemoClaw/bin/nemoclaw.js onboard --agent my-harness --name my-sandbox
 
 The package contains `manifest.yaml`, `policy-additions.yaml`, `Dockerfile`, `start.sh`, `launcher.sh`,
-`harness.mjs`, `dependency-review.md`, and `native-agent.json`.
+`harness.mjs`, `harness.test.mjs`, `dependency-review.md`, and `native-agent.json`.
 
-Those six files — manifest, policy, Dockerfile, start script, harness, and launcher — are `NATIVE_REQUIRED_FILES`. Every command validates that each one exists **as a regular file**, so a missing or replaced entry fails before anything is installed instead of during the image build.
+Those seven files — manifest, policy, Dockerfile, start script, harness, harness test, and launcher — are `NATIVE_REQUIRED_FILES`. Every command validates that each one exists **as a regular file**, so a missing or replaced entry fails before anything is installed instead of during the image build.
 
 ### Installing and replacing
 

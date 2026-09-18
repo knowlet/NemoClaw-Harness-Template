@@ -34,12 +34,13 @@ test('generated files carry no unresolved template artifacts', () => {
   const files = renderNativePackage({ name: 'my-harness' });
   for (const [name, content] of Object.entries(files)) {
     assert.ok(content.length > 0, name + ' is empty');
-    assert.ok(!content.includes('undefined'), name + ' contains an unresolved value');
+    // 'undefined' is valid JavaScript in the generated payload scripts; in a data or shell file it means a renderer bug.
+    if (!name.endsWith('.mjs')) assert.ok(!content.includes('undefined'), name + ' contains an unresolved value');
     for (const marker of ['${agent', '${NATIVE', '${name', '${model']) assert.ok(!content.includes(marker), name + ' contains an unrendered interpolation');
     assert.ok(content.endsWith('\n'), name + ' must end with a newline');
     assert.ok(!/[ \t]+$/m.test(content), name + ' has trailing whitespace');
   }
-  assert.deepEqual(Object.keys(files).sort(), ['Dockerfile', 'dependency-review.md', 'harness.mjs', 'launcher.sh', 'manifest.yaml', 'native-agent.json', 'policy-additions.yaml', 'start.sh']);
+  assert.deepEqual(Object.keys(files).sort(), ['Dockerfile', 'dependency-review.md', 'harness.mjs', 'harness.test.mjs', 'launcher.sh', 'manifest.yaml', 'native-agent.json', 'policy-additions.yaml', 'start.sh']);
 });
 
 test('the starter harness keeps newline escapes inside its string literals', () => {
@@ -247,6 +248,21 @@ test('the CLI requires a value for --json', () => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Missing option value/);
 });
+test('the generated package ships a contract test that passes', async () => {
+  const root = await tempDir();
+  try {
+    const pack = path.join(root, 'my-harness');
+    await scaffoldNativeAgent(pack, { name: 'my-harness' });
+    const result = spawnSync(process.execPath, ['--test', path.join(pack, NATIVE_CONTRACT.harnessTest)], { encoding: 'utf8' });
+    assert.equal(result.status, 0, String(result.stdout) + String(result.stderr));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('the package test is a required file', () => {
+  assert.ok(NATIVE_REQUIRED_FILES.includes(NATIVE_CONTRACT.harnessTest));
+  assert.ok(NATIVE_REQUIRED_FILES.includes(NATIVE_CONTRACT.harness));
+});
+
 test('nativeAgentDir stays inside the checkout agents directory', () => {
   assert.equal(nativeAgentDir('/tmp/NemoClaw', 'my-harness'), path.join('/tmp/NemoClaw', 'agents', 'my-harness'));
 });

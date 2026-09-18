@@ -23,6 +23,7 @@ export const NATIVE_CONTRACT = Object.freeze({
   dockerfile: 'Dockerfile',
   start: 'start.sh',
   harness: 'harness.mjs',
+  harnessTest: 'harness.test.mjs',
   launcher: 'launcher.sh',
   metadata: 'native-agent.json',
 });
@@ -41,6 +42,7 @@ export const NATIVE_REQUIRED_FILES = Object.freeze([
   NATIVE_CONTRACT.dockerfile,
   NATIVE_CONTRACT.start,
   NATIVE_CONTRACT.harness,
+  NATIVE_CONTRACT.harnessTest,
   NATIVE_CONTRACT.launcher,
 ]);
 
@@ -200,6 +202,44 @@ export function renderNativeLauncher(input) {
   );
 }
 
+/**
+ * Render a dependency-free contract test that ships with the package. It runs on
+ * the host, not in the image, so it stays plain JavaScript. Users run it before
+ * installing and keep it passing while they replace the starter payload.
+ */
+export function renderNativeHarnessTest(input: Partial<NativeAgentInput> = {}) {
+  const agent = defineNativeAgent(input);
+  return lines(
+    '#!/usr/bin/env node',
+    '// ' + NOTICE,
+    '// Contract test for agent ' + agent.name + ': run it before you install the package.',
+    '//   node --test ' + agent.name + '/' + NATIVE_CONTRACT.harnessTest,
+    "import test from 'node:test';",
+    "import assert from 'node:assert/strict';",
+    "import { execFileSync } from 'node:child_process';",
+    "import { fileURLToPath } from 'node:url';",
+    '',
+    "const harness = fileURLToPath(new URL('./" + NATIVE_CONTRACT.harness + "', import.meta.url));",
+    'const run = (args, input) => execFileSync(process.execPath, [harness, ...args], {',
+    "  encoding: 'utf8',",
+    '  ...(input === undefined ? {} : { input }),',
+    '});',
+    '',
+    "test('echoes a task from argv', () => {",
+    "  assert.equal(run(['hello']).trim(), 'Echo: hello');",
+    '});',
+    "test('echoes a task from stdin', () => {",
+    "  assert.equal(run([], 'from stdin').trim(), 'Echo: from stdin');",
+    '});',
+    "test('treats --smoke as the sentinel', () => {",
+    "  assert.equal(run(['--smoke']).trim(), 'NEMO_SMOKE_OK');",
+    '});',
+    "test('echoes a literal smoke task', () => {",
+    "  assert.equal(run(['smoke']).trim(), 'Echo: smoke');",
+    '});',
+  );
+}
+
 /** Render the image entrypoint. It keeps the managed sandbox alive for exec calls. */
 export function renderNativeStart(input) {
   const agent = defineNativeAgent(input);
@@ -290,6 +330,7 @@ export function renderNativePackage(input) {
     [NATIVE_CONTRACT.start]: renderNativeStart(agent),
     [NATIVE_CONTRACT.launcher]: renderNativeLauncher(agent),
     [NATIVE_CONTRACT.harness]: renderNativeHarness(agent),
+    [NATIVE_CONTRACT.harnessTest]: renderNativeHarnessTest(agent),
     'dependency-review.md': renderNativeDependencyReview(agent),
     [NATIVE_CONTRACT.metadata]: renderNativeMetadata(agent),
   });

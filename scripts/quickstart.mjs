@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** UNOFFICIAL native quickstart runner. It executes the documented tutorial steps in order. */
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,6 +20,7 @@ const USAGE = [
   '  --sandbox NAME    Sandbox name (default: my-sandbox)',
   '  --model MODEL     Model id recorded in the agent manifest (default: fixture-model)',
   '  --destroy         Delete the sandbox at the end',
+  '  --customize       Change the payload, redeploy, and require the new output',
   '  --dry-run         Print the steps without running them',
   '',
   'Set NEMOCLAW_ENDPOINT_URL, NEMOCLAW_MODEL, NEMOCLAW_PROVIDER_KEY, and NEMOCLAW_PROVIDER',
@@ -30,7 +31,7 @@ function parse(argv) {
   const flags = { name: 'my-harness', sandbox: 'my-sandbox', model: 'fixture-model', workdir: 'quickstart-work' };
   for (let i = 0; i < argv.length; i++) {
     const key = argv[i];
-    if (key === '--destroy' || key === '--dry-run') { flags[key.slice(2)] = true; continue; }
+    if (key === '--destroy' || key === '--dry-run' || key === '--customize') { flags[key.slice(2)] = true; continue; }
     if (key === '--help' || key === '-h') { flags.help = true; continue; }
     if (!['--workdir', '--nemoclaw', '--name', '--sandbox', '--model'].includes(key)) throw new Error('Unknown option: ' + key);
     if (argv[i + 1] === undefined) throw new Error('Missing value for ' + key);
@@ -151,6 +152,56 @@ function providerEnvironment(flags, env) {
   };
 }
 
+function destroySandbox(checkout, sandbox, env) {
+  const result = run('Delete the sandbox', [process.execPath, path.join(checkout, 'bin', 'nemoclaw.js'), sandbox, 'destroy', '--yes', '--force'], { env, allowFailure: true });
+  const text = (result.stdout + result.stderr).trim();
+  if (text) console.log('  ' + text.split(String.fromCharCode(10)).join(String.fromCharCode(10) + '  '));
+  if (result.code === 0) return { ok: true, detail: null };
+  // A sandbox that is already absent is a clean end state, not a failure.
+  if (/does not exist|already absent|not found/i.test(text)) return { ok: true, detail: null };
+  const detail = text.split(String.fromCharCode(10)).filter(Boolean).slice(-2).join(' ');
+  return { ok: false, detail: detail || ('exit ' + String(result.code)) };
+}
+
+function deploy(checkout, flags, env, expected) {
+  run('Onboard the agent with the real NemoClaw CLI', [
+    process.execPath, path.join(checkout, 'bin', 'nemoclaw.js'), 'onboard',
+    '--agent', flags.name, '--name', flags.sandbox,
+    '--no-gpu', '--no-sandbox-gpu', '--non-interactive', '--yes', '--yes-i-accept-third-party-software', '--fresh',
+  ], { env, inherit: true });
+  const exec = run('Run the harness inside the sandbox', [
+    process.execPath, path.join(checkout, 'bin', 'nemoclaw.js'), flags.sandbox, 'exec', '--', '/usr/local/bin/' + flags.name, expected.task,
+  ], { env });
+  console.log('');
+  console.log('  sandbox output: ' + exec.stdout.trim());
+  if (!exec.stdout.includes(expected.expect)) {
+    throw new Error('the sandbox returned ' + JSON.stringify(exec.stdout.trim()) + ' instead of ' + JSON.stringify(expected.expect));
+  }
+}
+
+/**
+ * The documented customization loop, asserted rather than described: change the
+ * payload in the package, keep the package test passing, reinstall, redeploy,
+ * and require the sandbox to return the new output. Without this a stale image
+ * would still look like success.
+ */
+function customizePass(packDir, checkout, flags, env) {
+  console.log('');
+  console.log('== Customize the harness and redeploy');
+  const harnessFile = path.join(packDir, 'harness.mjs');
+  const testFile = path.join(packDir, 'harness.test.mjs');
+  const harness = readFileSync(harnessFile, 'utf8');
+  if (!harness.includes('"Echo: "')) throw new Error('the starter harness no longer contains the expected echo prefix');
+  writeFileSync(harnessFile, harness.split('"Echo: "').join('"V2 Echo: "'));
+  const test = readFileSync(testFile, 'utf8');
+  writeFileSync(testFile, test.split("'Echo: ").join("'V2 Echo: "));
+  run('Run the package contract test after the change', [process.execPath, '--test', testFile], { env, inherit: true });
+  run('Reinstall the changed package', [process.execPath, path.join(REPO, 'bin', 'nha.mjs'), 'native', 'install', packDir, '--nemoclaw', checkout, '--replace'], { env });
+  const removed = destroySandbox(checkout, flags.sandbox, env);
+  if (!removed.ok) throw new Error('could not delete the sandbox before redeploying: ' + removed.detail);
+  deploy(checkout, flags, env, { task: 'NHA_NATIVE_V2', expect: 'V2 Echo: NHA_NATIVE_V2' });
+}
+
 async function main() {
   const flags = parse(process.argv.slice(2));
   if (flags.help) { console.log(USAGE); return; }
@@ -162,10 +213,12 @@ async function main() {
       '  3. npm ci, npm --prefix nemoclaw ci, npm run build:cli',
       '  4. install the checksum-pinned OpenShell (scripts/install-openshell.sh)',
       '  5. node bin/nha.mjs native init ' + flags.workdir + '/' + flags.name + ' --name ' + flags.name,
-      '  6. node bin/nha.mjs native install ' + flags.workdir + '/' + flags.name + ' --nemoclaw <checkout>',
-      '  7. node bin/nha.mjs native verify --nemoclaw <checkout> --name ' + flags.name,
-      '  8. node <checkout>/bin/nemoclaw.js onboard --agent ' + flags.name + ' --name ' + flags.sandbox + ' ...',
-      '  9. node <checkout>/bin/nemoclaw.js ' + flags.sandbox + ' exec -- /usr/local/bin/' + flags.name + ' NHA_NATIVE_OK',
+      '  6. node --test ' + flags.workdir + '/' + flags.name + '/harness.test.mjs',
+      '  7. node bin/nha.mjs native install ' + flags.workdir + '/' + flags.name + ' --nemoclaw <checkout> --replace',
+      '  8. node bin/nha.mjs native verify --nemoclaw <checkout> --name ' + flags.name,
+      '  9. node <checkout>/bin/nemoclaw.js onboard --agent ' + flags.name + ' --name ' + flags.sandbox + ' ...',
+      ' 10. node <checkout>/bin/nemoclaw.js ' + flags.sandbox + ' exec -- /usr/local/bin/' + flags.name + ' NHA_NATIVE_OK',
+      flags.customize ? ' 11. change the payload, rerun the package test, reinstall, redeploy, require "V2 Echo: NHA_NATIVE_V2"' : ' 11. (--customize runs the change/redeploy loop above)',
     ].join(String.fromCharCode(10)));
     return;
   }
@@ -186,35 +239,36 @@ async function main() {
     console.log('');
     console.log('  reusing the package at ' + packDir);
   }
+  run('Run the package contract test', [process.execPath, '--test', path.join(packDir, 'harness.test.mjs')], { env, inherit: true });
   run('Install it into the NemoClaw checkout', [process.execPath, path.join(REPO, 'bin', 'nha.mjs'), 'native', 'install', packDir, '--nemoclaw', checkout, '--replace'], { env });
   const verify = run('Ask the real NemoClaw loader', [process.execPath, path.join(REPO, 'bin', 'nha.mjs'), 'native', 'verify', '--nemoclaw', checkout, '--name', flags.name], { env });
   const report = JSON.parse(verify.stdout);
   if (report.loaderAccepted !== true) throw new Error('The NemoClaw loader did not accept the agent');
 
   const provider = providerEnvironment(flags, env);
-  let fixture = null;
-  if (provider.fixture) fixture = await startFixture(env);
+  const fixture = provider.fixture ? await startFixture(env) : null;
+  let deployError = null;
   try {
-    run('Onboard the agent with the real NemoClaw CLI', [
-      process.execPath, path.join(checkout, 'bin', 'nemoclaw.js'), 'onboard',
-      '--agent', flags.name, '--name', flags.sandbox,
-      '--no-gpu', '--no-sandbox-gpu', '--non-interactive', '--yes', '--yes-i-accept-third-party-software', '--fresh',
-    ], { env: provider.env, inherit: true });
-    const exec = run('Run the harness inside the sandbox', [
-      process.execPath, path.join(checkout, 'bin', 'nemoclaw.js'), flags.sandbox, 'exec', '--', '/usr/local/bin/' + flags.name, 'NHA_NATIVE_OK',
-    ], { env: provider.env });
-    const ok = exec.stdout.includes('Echo: NHA_NATIVE_OK');
-    console.log('');
-    console.log('  sandbox output: ' + exec.stdout.trim());
-    if (!ok) throw new Error('The harness did not run inside the sandbox');
-    if (flags.destroy) {
-      run('Delete the sandbox', [process.execPath, path.join(checkout, 'bin', 'nemoclaw.js'), flags.sandbox, 'destroy', '--yes', '--force'], { env: provider.env, allowFailure: true });
-    }
-    console.log('');
-    console.log('QUICKSTART OK: NemoClaw built agents/' + flags.name + ', created sandbox ' + flags.sandbox + ', and ran the launcher inside it.');
+    deploy(checkout, flags, provider.env, { task: 'NHA_NATIVE_OK', expect: 'Echo: NHA_NATIVE_OK' });
+    if (flags.customize) customizePass(packDir, checkout, flags, provider.env);
+  } catch (error) {
+    deployError = error;
   } finally {
     if (fixture) fixture.kill('SIGTERM');
   }
+
+  // Cleanup runs even when the deploy failed: a retained sandbox from a failed
+  // attempt blocks the next onboarding under the same name.
+  let cleanupError = null;
+  if (flags.destroy) {
+    const removed = destroySandbox(checkout, flags.sandbox, provider.env);
+    if (!removed.ok) cleanupError = new Error('the sandbox could not be deleted: ' + removed.detail);
+  }
+  if (deployError) throw deployError;
+  if (cleanupError) throw cleanupError;
+  console.log('');
+  console.log('QUICKSTART OK: NemoClaw built agents/' + flags.name + ', created sandbox ' + flags.sandbox + ', and ran the launcher inside it'
+    + (flags.customize ? ', then redeployed a changed payload and verified the new output' : '') + '.');
 }
 
 main().catch((error) => {

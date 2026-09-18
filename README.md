@@ -154,7 +154,8 @@ node bin/nha.mjs native verify --nemoclaw ../NemoClaw --name my-harness
 ```
 
 The generated package contains `manifest.yaml`, `policy-additions.yaml`, `Dockerfile`,
-`start.sh`, `harness.mjs`, `dependency-review.md`, and `native-agent.json`. NemoClaw builds
+`start.sh`, `launcher.sh`, `harness.mjs`, `harness.test.mjs`, `dependency-review.md`, and
+`native-agent.json`. The package ships its own test, which runs on the host before you install it. NemoClaw builds
 that Dockerfile itself on the Docker driver and enforces the generated deny-by-default policy.
 
 `native verify` runs the real compiled loader from the checkout and reports `listed`,
