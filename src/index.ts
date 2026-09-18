@@ -80,10 +80,10 @@ export const runHarness: (
   adapter: AdapterManifest,
   task: string,
   options?: RunOptions,
-) => Promise<RunResult> = sdk.runHarness;
+) => Promise<RunResult> = sdk.runHarness as unknown as (adapter: AdapterManifest, task: string, options?: RunOptions) => Promise<RunResult>;
 export const createInferenceClient: (options: InferenceOptions) => Readonly<{
   chat(messages: ChatMessage[], options?: ChatOptions): Promise<ChatResponse>;
-}> = sdk.createInferenceClient;
+}> = sdk.createInferenceClient as unknown as (options: InferenceOptions) => Readonly<{ chat(messages: ChatMessage[], options?: ChatOptions): Promise<ChatResponse> }>;
 export const digest: (value: unknown) => string = sdk.digest;
 export const assertImageDigest: (image: string) => string = sdk.assertImageDigest;
 export const buildOpenShellCommand: (options: OpenShellOptions) => string[] = sdk.buildOpenShellCommand;
@@ -100,16 +100,16 @@ export const buildOpenShellPlan: (options: OpenShellOptions) => OpenShellPlan = 
 export const launchOpenShell: (
   options: OpenShellOptions,
   controls?: { signal?: AbortSignal },
-) => Promise<{ name: string; taskSucceeded: true }> = deploy.launchOpenShell;
+) => Promise<{ name: string; taskSucceeded: true }> = deploy.launchOpenShell as unknown as (options: OpenShellOptions, controls?: { signal?: AbortSignal }) => Promise<{ name: string; taskSucceeded: true }>;
 
 export const SUITE_VERSION: 'harness-suite/v1' = testkit.SUITE_VERSION;
 export const defineSuite: (input: HarnessSuite) => Readonly<HarnessSuite> = testkit.defineSuite;
-export const runSuite: (input: HarnessSuite, options: SuiteOptions) => Promise<SuiteReport> = testkit.runSuite;
+export const runSuite: (input: HarnessSuite, options: SuiteOptions) => Promise<SuiteReport> = testkit.runSuite as unknown as (input: HarnessSuite, options: SuiteOptions) => Promise<SuiteReport>;
 export const toJUnit: (report: SuiteReport) => string = testkit.toJUnit;
 export const createMockInferenceServer: (options?: {
   model?: string;
   replies?: Array<string | MockInferenceReply>;
-}) => Promise<MockInferenceServer> = testkit.createMockInferenceServer;
+}) => Promise<MockInferenceServer> = testkit.createMockInferenceServer as unknown as (options?: { model?: string; replies?: Array<string | MockInferenceReply> }) => Promise<MockInferenceServer>;
 
 export const NATIVE_CONTRACT: Readonly<{
   upstream: string;
