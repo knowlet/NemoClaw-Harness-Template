@@ -20,6 +20,8 @@
 ```bash
 git clone -b develop https://github.com/knowlet/NemoClaw-Harness-Template.git
 cd NemoClaw-Harness-Template
+npm ci --ignore-scripts
+npm run build
 node scripts/quickstart.mjs --workdir /tmp/nha-quickstart
 ```
 
