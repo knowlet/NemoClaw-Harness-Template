@@ -3,8 +3,15 @@
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { AdapterError, buildOpenShellCommand } from './sdk.js';
+import type { OpenShellOptions, OpenShellPlan } from './types.js';
 
-export function buildOpenShellPlan(options) {
+interface CommandOptions {
+  quiet?: boolean;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+export function buildOpenShellPlan(options: OpenShellOptions): OpenShellPlan {
   const legacy = buildOpenShellCommand(options); // Reuse all input and image validations.
   const separator = legacy.indexOf('--');
   return {
@@ -14,9 +21,9 @@ export function buildOpenShellPlan(options) {
   };
 }
 
-function command(argv, { quiet = false, timeoutMs, signal } = {}) {
+function command(argv: string[], { quiet = false, timeoutMs, signal }: CommandOptions = {}): Promise<number> {
   if (signal?.aborted) return Promise.reject(new AdapterError('ABORTED', 'OpenShell operation cancelled'));
-  return new Promise((resolve, reject) => {
+  return new Promise<number>((resolve, reject) => {
     let stopped = false;
     const child = spawn(argv[0], argv.slice(1), { shell: false, stdio: quiet ? 'ignore' : 'inherit' });
     const abort = () => { stopped = true; child.kill('SIGKILL'); };
@@ -35,7 +42,7 @@ function command(argv, { quiet = false, timeoutMs, signal } = {}) {
 }
 
 /** A failed task is a failed launch; creation alone never counts as task success. */
-export async function launchOpenShell(options, { signal } = {}) {
+export async function launchOpenShell(options: OpenShellOptions, { signal }: { signal?: AbortSignal } = {}): Promise<{ name: string; taskSucceeded: true }> {
   const plan = buildOpenShellPlan(options);
   if (await command(plan.create, { timeoutMs: 120000, signal }) !== 0) {
     throw new AdapterError('SANDBOX_CREATE_FAILED', 'OpenShell sandbox creation failed');
@@ -44,7 +51,7 @@ export async function launchOpenShell(options, { signal } = {}) {
   let ready = false;
   while (Date.now() < deadline) {
     try { ready = await command(plan.ready, { quiet: true, timeoutMs: 5000, signal }) === 0; }
-    catch (e) { if (e.code !== 'TIMEOUT') throw e; }
+    catch (e) { if (!(e instanceof AdapterError) || e.code !== 'TIMEOUT') throw e; }
     if (ready) break;
     try { await delay(1000, undefined, { signal }); }
     catch { throw new AdapterError('ABORTED', 'OpenShell operation cancelled'); }
@@ -54,5 +61,5 @@ export async function launchOpenShell(options, { signal } = {}) {
     throw new AdapterError('SANDBOX_TASK_FAILED', 'Harness task failed inside the sandbox');
   }
   // The idle sandbox remains available for more exec calls. Removal is explicit.
-  return { name: options.name, taskSucceeded: true };
+  return { name: options.name, taskSucceeded: true as const };
 }
