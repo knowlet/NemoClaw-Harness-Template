@@ -214,14 +214,14 @@ test('fresh scaffold works and never overwrites an existing directory', async (t
   const dir = await temp(t), output = path.join(dir, 'project');
   await scaffold(output, { name: 'example-harness' });
   assert.equal((await loadAdapter(path.join(output, 'adapter.json'))).metadata.name, 'example-harness');
-  const result = spawnSync(process.execPath, ['bin/nha.mjs', 'demo'], { cwd: output, encoding: 'utf8' });
+  const result = spawnSync(process.execPath, ['bin/nha.js', 'demo'], { cwd: output, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Echo: Hello/);
   await assert.rejects(scaffold(output), code('DESTINATION_EXISTS'));
 });
 test('CLI rejects ambiguous execution and invalid commands', () => {
   for (const args of [['not-a-command'], ['exec', 'missing.json', '--task', 'x'], ['--unknown']]) {
-    const result = spawnSync(process.execPath, ['bin/nha.mjs', ...args], { cwd: root, encoding: 'utf8' });
+    const result = spawnSync(process.execPath, ['bin/nha.js', ...args], { cwd: root, encoding: 'utf8' });
     assert.equal(result.status, 1);
   }
 });
