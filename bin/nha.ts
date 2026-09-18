@@ -1,6 +1,6 @@
+#!/usr/bin/env node
 // TypeScript source of truth; declarations are emitted by tsc.
 // @ts-nocheck
-#!/usr/bin/env node
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
