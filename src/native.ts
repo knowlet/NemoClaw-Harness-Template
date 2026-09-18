@@ -5,6 +5,9 @@ import { cp, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } 
 import os from 'node:os';
 import path from 'node:path';
 import { AdapterError, NOTICE } from './sdk.js';
+import type {
+  NativeAgentInput, NativeAgentDefinition, NativeInstallResult, NativeVerificationReport,
+} from './types.js';
 
 /**
  * Upstream layout this packaging targets. NemoClaw's agents/<name>/ contract is
@@ -59,7 +62,7 @@ const SANDBOX_HOME = '/sandbox';
 const SANDBOX_UID = 999;
 const VERIFY_MAX_BYTES = 1 << 20;
 
-function fail(code, message) { throw new AdapterError(code, message); }
+function fail(code: string, message: string): never { throw new AdapterError(code, message); }
 
 function shortText(value, max, label) {
   if (typeof value !== 'string' || value.length === 0 || value.length > max || /[\u0000\r\n]/.test(value)) fail('INVALID_MANIFEST', 'Invalid ' + label);
@@ -70,7 +73,7 @@ const yaml = (value) => JSON.stringify(value);
 const lines = (...rows) => rows.join('\n') + '\n';
 
 /** Normalize and validate a native agent request. */
-export function defineNativeAgent(input = {}) {
+export function defineNativeAgent(input: Partial<NativeAgentInput> | null = {}): NativeAgentDefinition {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_MANIFEST', 'Native agent input must be an object');
   if (typeof input.name !== 'string' || !AGENT_NAME.test(input.name)) fail('INVALID_MANIFEST', 'Agent name must start with a lowercase letter and use only lowercase letters, digits, and dashes (32 characters max)');
   if (RESERVED_AGENT_NAMES.includes(input.name)) fail('INVALID_MANIFEST', 'Agent name is reserved because it collides with a runtime path or a shipped agent: ' + input.name);
@@ -378,7 +381,7 @@ export async function readNativePackage(directory) {
  * lands in a staging directory under agents/, and only a fully staged package
  * is swapped in, with the previous directory restored if the swap fails.
  */
-export async function installNativeAgent(directory, { nemoclawRoot, replace = false } = {}) {
+export async function installNativeAgent(directory: string, { nemoclawRoot, replace = false }: { nemoclawRoot?: string; replace?: boolean } = {}): Promise<NativeInstallResult> {
   if (!nemoclawRoot) fail('USAGE', 'A NemoClaw source checkout is required');
   const pack = await readNativePackage(directory);
   const root = await assertNativeCheckout(nemoclawRoot);
@@ -467,7 +470,7 @@ export function nativeVerifySource() {
  * loader accepts the package and selects our Dockerfile. It does not prove a
  * deployment: onboarding and sandbox execution are reported separately.
  */
-export async function verifyNativeAgent({ nemoclawRoot, name, timeoutMs = 120000 } = {}) {
+export async function verifyNativeAgent({ nemoclawRoot, name, timeoutMs = 120000 }: { nemoclawRoot?: string; name?: string; timeoutMs?: number } = {}): Promise<NativeVerificationReport> {
   if (typeof name !== 'string' || !AGENT_NAME.test(name)) fail('USAGE', 'A valid agent name is required');
   const root = await assertNativeCheckout(nemoclawRoot);
   if (!(await exists(path.join(root, 'dist/lib/agent/defs.js')))) {
@@ -510,7 +513,7 @@ export async function verifyNativeAgent({ nemoclawRoot, name, timeoutMs = 120000
       const detail = stderrTail.trim().split(String.fromCharCode(10)).slice(-3).join(' ');
       fail('VERIFY_FAILED', 'The NemoClaw loader probe produced no usable report (exit ' + String(code) + ')' + (detail ? ': ' + detail : ''));
     }
-    return report;
+    return report as NativeVerificationReport;
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
