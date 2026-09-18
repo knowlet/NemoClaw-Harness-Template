@@ -7,8 +7,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AdapterError, VERSION, NOTICE, createAdapter, loadAdapter, assertManagedFile, runHarness, buildOpenShellPlan, launchOpenShell, scaffold, renderPolicy, renderDockerfile, renderDeepSeekPatch } from '../src/index.js';
 
-function parse(args) {
-  const positional = [], flags = {};
+function parse(args: string[]) {
+  const positional: string[] = [], flags: Record<string, any> = {};
   for (let i = 0; i < args.length; i++) {
     const value = args[i];
     if (!value.startsWith('--')) { positional.push(value); continue; }
@@ -25,7 +25,7 @@ function parse(args) {
 function help() {
   console.log(`${NOTICE}\n\nUsage: nha <command>\n  demo                              Run a deterministic local echo (no sandbox/LLM)\n  init <directory> [--name NAME] [--model MODEL]\n  validate <adapter.json>\n  render <adapter.json> --output NEW_DIRECTORY\n  exec <adapter.json> (--managed | --allow-host) (--task TEXT | --task-file FILE)\n  plan --name NAME --image IMAGE --policy FILE --task TEXT [--dev-image]\n  launch <same arguments as plan>    Explicitly execute the OpenShell BYOC command\n  native init|install|verify ...      Package a harness as a NemoClaw-native agents/<name> runtime\n  test <suite.json> --adapter FILE (--allow-host | --managed) [--json FILE] [--junit FILE]\n  doctor                            Check local prerequisites; no changes\n  --version\n\nNative packaging targets one pinned NemoClaw revision and never publishes anything.\n`);
 }
-async function main() {
+async function main(): Promise<void> {
   if (process.argv[2] === 'test') { const { testCommand } = await import('./test.js'); return testCommand(process.argv.slice(3)); }
   if (process.argv[2] === 'native') { const { nativeCommand } = await import('./native.js'); return nativeCommand(process.argv.slice(3)); }
   const { positional, flags } = parse(process.argv.slice(2));
@@ -36,7 +36,7 @@ async function main() {
     console.error('UNOFFICIAL demo: local echo only; no sandbox and no inference request.');
     const dir = await mkdtemp(path.join(os.tmpdir(), 'nha-demo-'));
     try {
-      const adapter = structuredClone(createAdapter('echo'));
+      const adapter: any = structuredClone(createAdapter('echo'));
       adapter.runtime.command = [process.execPath, fileURLToPath(new URL('../../examples/echo/agent.mjs', import.meta.url))];
       const result = await runHarness(adapter, 'Hello, harness!', { cwd: dir, home: dir });
       process.stdout.write(result.stdout);
@@ -57,7 +57,7 @@ async function main() {
     return;
   }
   if (command === 'plan' || command === 'launch') {
-    const options = { name: flags.name, image: flags.image, policy: flags.policy, task: flags.task, allowMutableImage: flags['dev-image'] === true };
+    const options: any = { name: flags.name, image: flags.image, policy: flags.policy, task: flags.task, allowMutableImage: flags['dev-image'] === true };
     const commands = buildOpenShellPlan(options);
     if (command === 'plan') {
       console.log(JSON.stringify({ notice: NOTICE, integration: 'OpenShell BYOC, not registered NemoClaw runtime', developmentImage: flags['dev-image'] === true, commands, prerequisites: ['Compatible OpenShell gateway', 'Image available to the gateway', 'Reviewed policy', 'An existing NemoClaw-compatible inference.local route for LLM tasks'] }, null, 2));
