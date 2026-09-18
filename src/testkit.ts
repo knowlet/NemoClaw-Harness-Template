@@ -1,5 +1,4 @@
 // TypeScript source of truth; declarations are emitted by tsc.
-// @ts-nocheck
 /** UNOFFICIAL, dependency-free black-box harness test kit. Not sandbox attestation. */
 import { performance } from 'node:perf_hooks';
 import { createServer } from 'node:http';
