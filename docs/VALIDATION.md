@@ -1,6 +1,6 @@
 # Validation record — UNOFFICIAL
 
-Date: 2026-09-17. Evidence is scoped to the exact check, not NVIDIA certification.
+Date: 2026-09-18. Evidence is scoped to the exact check, not NVIDIA certification.
 
 ## SDK v0.3.0
 
@@ -46,6 +46,8 @@ A pinned NVIDIA/NemoClaw checkout was built locally (aarch64) with its own npm c
 
 Two real defects surfaced only in this end-to-end run and are fixed in the generator: the image lacked iproute2/nftables, which the OpenShell supervisor needs to build its network namespace, and the manifest declared no binary_path, which NemoClaw terminal-agent setup requires. Earlier attempts failed on each in turn. Deployment evidence is also recorded by the CI workflow below.
 
+Runtime integration run [35326474616](https://github.com/knowlet/NemoClaw-Harness-Template/actions/runs/35326474616) on commit `c3af650` passed every recorded check on a GitHub-hosted Ubuntu 24.04 Docker runner (`cli`, `native_loader`, `onboard`, `native`, `byoc`, `embedded` all `success`). That run builds the pinned NemoClaw CLI, installs checksum-verified OpenShell 0.0.116, verifies the generated agent against the real loader, onboards it, executes the harness inside the sandbox, and then runs the OpenShell BYOC path.
+
 ## Limits
 
-No real-model quality benchmark, DeepSeek runtime boot, dual-architecture qualification, GPU inference, or lifecycle/snapshot/restore test is claimed. Execution of the generic adapter inside an existing NemoClaw-managed OpenClaw sandbox is not first-class registration of an arbitrary agent in NemoClaw onboarding. Filesystem and egress security are established only for explicit assertions that actually passed, not by an SDK status flag.
+No real-model quality benchmark, DeepSeek runtime boot, dual-architecture qualification, GPU inference, or lifecycle/snapshot/restore test is claimed. Native packaging registers one agent for one pinned NemoClaw revision; other NemoClaw-managed operations (snapshots, recovery, lifecycle verbs) remain unimplemented. Filesystem and egress security are established only for explicit assertions that actually passed, not by an SDK status flag.
