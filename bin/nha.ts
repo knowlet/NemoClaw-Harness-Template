@@ -38,7 +38,7 @@ async function main() {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'nha-demo-'));
     try {
       const adapter = structuredClone(createAdapter('echo'));
-      adapter.runtime.command = [process.execPath, fileURLToPath(new URL('../examples/echo/agent.js', import.meta.url))];
+      adapter.runtime.command = [process.execPath, fileURLToPath(new URL('../../examples/echo/agent.mjs', import.meta.url))];
       const result = await runHarness(adapter, 'Hello, harness!', { cwd: dir, home: dir });
       process.stdout.write(result.stdout);
     } finally { await rm(dir, { recursive: true, force: true }); }
