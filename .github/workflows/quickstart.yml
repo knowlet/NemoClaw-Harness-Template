@@ -29,6 +29,10 @@ jobs:
             exit 1
           fi
           echo "No pre-existing NemoClaw state."
+      - name: Build the TypeScript SDK and CLI
+        run: |
+          npm ci --ignore-scripts
+          npm run build
       - name: Run the quickstart exactly as documented
         run: |
           set -o pipefail
