@@ -1,5 +1,4 @@
 // TypeScript source of truth; declarations are emitted by tsc.
-// @ts-nocheck
 // UNOFFICIAL explicit-execution suite CLI. JSON suite files contain no executable hooks.
 import { readFile, stat, writeFile, mkdtemp, mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
