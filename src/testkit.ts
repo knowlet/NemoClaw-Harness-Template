@@ -2,16 +2,21 @@
 /** UNOFFICIAL, dependency-free black-box harness test kit. Not sandbox attestation. */
 import { performance } from 'node:perf_hooks';
 import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { AdapterError, defineAdapter, digest, runHarness } from './sdk.js';
+import type { AdapterManifest } from './types.js';
+import type {
+  HarnessSuite, SuiteReport, MockInferenceReply, MockInferenceServer,
+} from './testing-types.js';
 export const SUITE_VERSION = 'harness-suite/v1' as const;
-const object = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const object = (v: unknown): v is Record<string, any> => v !== null && typeof v === 'object' && !Array.isArray(v);
 const text = (v, max) => typeof v === 'string' && Buffer.byteLength(v) <= max && !v.includes('\0');
 function fields(v, allowed) {
   return object(v) && Object.keys(v).every((k) => allowed.includes(k));
 }
 function invalid() { throw new AdapterError('INVALID_SUITE', 'Invalid harness suite; see the versioned test-kit contract'); }
 function freeze(v) { if (v && typeof v === 'object') { Object.values(v).forEach(freeze); Object.freeze(v); } return v; }
-export function defineSuite(input) {
+export function defineSuite(input: HarnessSuite): Readonly<HarnessSuite> {
   if (!fields(input, ['version', 'name', 'cases']) || input.version !== SUITE_VERSION || !text(input.name, 128) || !input.name) invalid();
   if (!Array.isArray(input.cases) || input.cases.length < 1 || input.cases.length > 100) invalid();
   const names = new Set();
@@ -30,7 +35,7 @@ export function defineSuite(input) {
 }
 
 /** Supply either an adapter or a custom invocation bridge, never both. Reports omit task/output/error messages. */
-export async function runSuite(input, options = {}) {
+export async function runSuite(input: HarnessSuite, options: any = {}): Promise<SuiteReport> {
   const suite = defineSuite(input);
   if (Boolean(options.adapter) === Boolean(options.invoke) || (options.invoke && typeof options.invoke !== 'function')) {
     throw new AdapterError('INVALID_SUITE_OPTIONS', 'Supply exactly one adapter or invoke function');
@@ -87,14 +92,14 @@ export async function runSuite(input, options = {}) {
     });
   }
   const count = (status) => results.filter((c) => c.status === status).length;
-  return { version: SUITE_VERSION, name: suite.name, unofficial: true, suiteSha256: digest(suite),
-    execution: adapter ? 'process' : 'custom-invoke', sandboxVerified: false,
+  return { version: SUITE_VERSION, name: suite.name, unofficial: true as const, suiteSha256: digest(suite),
+    execution: adapter ? 'process' as const : 'custom-invoke' as const, sandboxVerified: false as const,
     passed: count('passed'), failed: count('failed'), cancelled: count('cancelled'),
     ok: results.every((c) => c.status === 'passed'), durationMs: Math.round(performance.now() - started), cases: results };
 }
 
 /** Loopback-only deterministic OpenAI-compatible fixture. It is NOT a model or a managed gateway. */
-export async function createMockInferenceServer({ replies = ['MOCK_OK'], model = 'fixture-model' } = {}) {
+export async function createMockInferenceServer({ replies = ['MOCK_OK'], model = 'fixture-model' }: { replies?: Array<string | MockInferenceReply>; model?: string } = {}): Promise<MockInferenceServer> {
   if (!Array.isArray(replies) || !replies.length || !replies.every((r) => typeof r === 'string' || (object(r) && (typeof r.content === 'string' || r.content === null) && (!r.tool_calls || Array.isArray(r.tool_calls))))) invalid();
   const queue = JSON.parse(JSON.stringify(replies));
   const requests = [];
@@ -117,10 +122,10 @@ export async function createMockInferenceServer({ replies = ['MOCK_OK'], model =
   });
   server.requestTimeout = 5000;
   server.headersTimeout = 5000;
-  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
-  return { baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
+  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+  return { baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`,
     get requests() { return structuredClone(requests); },
-    close: () => new Promise((resolve, reject) => { server.close((e) => e ? reject(e) : resolve()); server.closeAllConnections(); }) };
+    close: () => new Promise<void>((resolve, reject) => { server.close((e) => e ? reject(e) : resolve()); server.closeAllConnections(); }) };
 }
 
 /** JUnit output contains only names, status codes, and timings; never task/output bodies. */
