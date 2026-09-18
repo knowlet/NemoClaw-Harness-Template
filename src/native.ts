@@ -20,7 +20,7 @@ export const NATIVE_CONTRACT = Object.freeze({
   policy: 'policy-additions.yaml',
   dockerfile: 'Dockerfile',
   start: 'start.sh',
-  harness: 'harness.js',
+  harness: 'harness.mjs',
   launcher: 'launcher.sh',
   metadata: 'native-agent.json',
 });
@@ -87,7 +87,7 @@ export function defineNativeAgent(input = {}) {
     home: SANDBOX_HOME,
     stateDir: SANDBOX_HOME + '/.' + name,
     installDir: '/usr/local/lib/nemo-' + name,
-    harnessPath: '/usr/local/lib/nemo-' + name + '/harness.js',
+    harnessPath: '/usr/local/lib/nemo-' + name + '/harness.mjs',
     binaryPath: '/usr/local/bin/' + name,
   });
 }
