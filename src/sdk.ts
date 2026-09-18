@@ -1,5 +1,4 @@
 // TypeScript source of truth; declarations are emitted by tsc.
-// @ts-nocheck
 /** Independent, UNOFFICIAL harness adapter SDK. Not an NVIDIA extension API. */
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
