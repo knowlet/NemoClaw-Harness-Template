@@ -17,7 +17,7 @@
       "import": "./dist/src/testing.js"
     }
   },
-  "types": "./src/index.d.ts",
+  "types": "./dist/src/index.d.ts",
   "bin": {
     "nha": "bin/nha.mjs"
   },

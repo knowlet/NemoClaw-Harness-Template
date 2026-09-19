@@ -28,14 +28,29 @@ export const NATIVE_CONTRACT = Object.freeze({
   metadata: 'native-agent.json',
 });
 
-export const NATIVE_PACK_VERSION = 1;
+/**
+ * Pack format version emitted by this SDK. Version 2 adds the harness test to
+ * the required set; version 1 packages stay installable without it because the
+ * test is not a Docker build input and an existing package should not stop
+ * working just because the generator learned a new file.
+ */
+export const NATIVE_PACK_VERSION = 2;
 
 const AGENT_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 
 /**
- * Files a native package must carry for the generated Dockerfile to build.
- * The generator and the validator read one list so the two cannot drift.
+ * Files a native package must carry. The generator and the validator read one
+ * table so the two cannot drift, and each pack version keeps its own set.
  */
+export const NATIVE_REQUIRED_FILES_V1 = Object.freeze([
+  NATIVE_CONTRACT.manifest,
+  NATIVE_CONTRACT.policy,
+  NATIVE_CONTRACT.dockerfile,
+  NATIVE_CONTRACT.start,
+  NATIVE_CONTRACT.harness,
+  NATIVE_CONTRACT.launcher,
+]);
+
 export const NATIVE_REQUIRED_FILES = Object.freeze([
   NATIVE_CONTRACT.manifest,
   NATIVE_CONTRACT.policy,
@@ -45,6 +60,18 @@ export const NATIVE_REQUIRED_FILES = Object.freeze([
   NATIVE_CONTRACT.harnessTest,
   NATIVE_CONTRACT.launcher,
 ]);
+
+const NATIVE_REQUIRED_FILES_BY_VERSION: Readonly<Record<number, readonly string[]>> = Object.freeze({
+  1: NATIVE_REQUIRED_FILES_V1,
+  2: NATIVE_REQUIRED_FILES,
+});
+
+/** Resolve the required file set for a declared pack version, or fail closed. */
+function nativeRequiredFiles(packVersion: unknown): readonly string[] {
+  const files = typeof packVersion === 'number' ? NATIVE_REQUIRED_FILES_BY_VERSION[packVersion] : undefined;
+  if (!files) fail('INVALID_PACKAGE', 'Unsupported native agent package version: ' + String(packVersion));
+  return files;
+}
 
 /**
  * Names this packaging must refuse. The launcher installs to
@@ -336,7 +363,12 @@ export function renderNativePackage(input) {
   });
 }
 
-export function nativeAgentDir(nemoclawRoot, name) {
+/**
+ * Resolve the installed directory for an agent. The name is validated here as well
+ * as at the callers so this exported helper can never return an out-of-tree path.
+ */
+export function nativeAgentDir(nemoclawRoot: string, name: string): string {
+  if (typeof name !== 'string' || !AGENT_NAME.test(name)) fail('USAGE', 'A valid agent name is required');
   return path.join(path.resolve(nemoclawRoot), NATIVE_CONTRACT.agentRoot, name);
 }
 
@@ -360,8 +392,8 @@ export async function assertNativeCheckout(nemoclawRoot) {
  * Every required entry must be a regular file. Existence alone would let a
  * directory or symlink pass validation and fail later, inside the image build.
  */
-async function assertNativePackageFiles(directory) {
-  for (const required of NATIVE_REQUIRED_FILES) {
+async function assertNativePackageFiles(directory: string, files: readonly string[]) {
+  for (const required of files) {
     let entry;
     try { entry = await lstat(path.join(directory, required)); }
     catch { fail('INVALID_PACKAGE', 'Native agent package is missing ' + required); }
@@ -377,6 +409,78 @@ function isSameOrInside(parent, child) {
 async function canonicalOrNull(target) {
   try { return await realpath(target); }
   catch { return null; }
+}
+
+/**
+ * A package is only usable when its parts agree. A manifest or Dockerfile generated
+ * for a different agent or a different upstream revision would install under one name
+ * and load another, so those mismatches fail before anything reaches the checkout.
+ */
+interface NativePackageMetadata {
+  pack?: unknown;
+  packVersion?: unknown;
+  contract?: { upstream?: unknown; revision?: unknown };
+  agent?: { name?: unknown };
+}
+
+/** Read the top-level manifest name, tolerating quotes, comments, and spacing. */
+function manifestAgentName(manifest: string): string | null {
+  const lines = manifest
+    .split(/\r?\n/)
+    .filter((line) => line.trim() !== '' && !line.trimStart().startsWith('#'));
+  // The least-indented lines are the top level, so a "name:" nested under another
+  // mapping is never mistaken for the agent name, and a uniformly indented
+  // manifest still reads correctly.
+  const topLevelIndent = Math.min(...lines.map((line) => line.length - line.trimStart().length));
+  for (const line of lines) {
+    if (line.length - line.trimStart().length !== topLevelIndent) continue;
+    const match = /^name[ \t]*:[ \t]*(.*)$/.exec(line.trimStart());
+    if (!match) continue;
+    const value = match[1].split('#')[0].trim().replace(/^["']|["']$/g, '').trim();
+    if (value) return value;
+  }
+  return null;
+}
+/** True when the Dockerfile builds from the agent package directory. Comments do not count. */
+function dockerfileReferencesAgent(dockerfile: string, name: string): boolean {
+  const needle = NATIVE_CONTRACT.agentRoot + '/' + name;
+  for (const line of dockerfile.split(/\r?\n/)) {
+    if (line.trimStart().startsWith('#')) continue;
+    let index = line.indexOf(needle);
+    while (index !== -1) {
+      const next = line[index + needle.length];
+      // The boundary keeps "agents/my-harness" from matching "agents/my-harness-extra".
+      if (next === undefined || next === '/' || next === '"' || next === "'" || /\s/.test(next)) return true;
+      index = line.indexOf(needle, index + 1);
+    }
+  }
+  return false;
+}
+
+/** Read a package file, reporting an unreadable entry through the package error contract. */
+async function readPackageFile(directory: string, file: string): Promise<string> {
+  try { return await readFile(path.join(directory, file), 'utf8'); }
+  catch { fail('INVALID_PACKAGE', 'Native agent package entry is unreadable: ' + file); }
+}
+
+async function assertNativePackageMatchesMetadata(directory: string, metadata: NativePackageMetadata, packVersion: number): Promise<void> {
+  const name = String(metadata.agent?.name ?? '');
+  const contract = metadata.contract;
+  if (contract === undefined) {
+    // Version 1 predates the recorded contract, and the previous validator never
+    // required it, so an existing package must keep installing.
+    if (packVersion >= 2) fail('INVALID_PACKAGE', 'Native agent package does not record the upstream contract it targets');
+  } else if (contract.upstream !== NATIVE_CONTRACT.upstream || contract.revision !== NATIVE_CONTRACT.revision) {
+    fail('INVALID_PACKAGE', 'Native agent package targets a different upstream revision than this SDK');
+  }
+  const declared = manifestAgentName(await readPackageFile(directory, NATIVE_CONTRACT.manifest));
+  if (declared !== name) {
+    fail('INVALID_PACKAGE', 'The manifest declares agent ' + String(declared) + ', not the agent named in ' + NATIVE_CONTRACT.metadata);
+  }
+  const dockerfile = await readPackageFile(directory, NATIVE_CONTRACT.dockerfile);
+  if (!dockerfileReferencesAgent(dockerfile, name)) {
+    fail('INVALID_PACKAGE', 'The Dockerfile does not build from ' + NATIVE_CONTRACT.agentRoot + '/' + name);
+  }
 }
 
 /** Create a native agent package. The destination must not already exist. */
@@ -405,11 +509,13 @@ export async function readNativePackage(directory) {
   try { metadata = JSON.parse(await readFile(path.join(target, NATIVE_CONTRACT.metadata), 'utf8')); }
   catch { fail('INVALID_PACKAGE', 'Not a native agent package: missing ' + NATIVE_CONTRACT.metadata); }
   if (metadata?.pack !== 'nemoclaw-native-agent') fail('INVALID_PACKAGE', 'Unsupported native agent package format');
-  if (metadata.packVersion !== NATIVE_PACK_VERSION) fail('INVALID_PACKAGE', 'Unsupported native agent package version');
+  const packVersion = metadata.packVersion;
+  const required = nativeRequiredFiles(packVersion);
   const name = metadata.agent?.name;
   if (typeof name !== 'string' || !AGENT_NAME.test(name)) fail('INVALID_PACKAGE', 'Invalid agent name in package metadata');
   if (RESERVED_AGENT_NAMES.includes(name)) fail('INVALID_PACKAGE', 'Reserved agent name in package metadata: ' + name);
-  await assertNativePackageFiles(target);
+  await assertNativePackageFiles(target, required);
+  await assertNativePackageMatchesMetadata(target, metadata, packVersion);
   return { directory: target, agent: metadata.agent, metadata };
 }
 
@@ -448,7 +554,8 @@ export async function installNativeAgent(directory: string, { nemoclawRoot, repl
   let preserveStaging = false;
   try {
     await cp(source, staged, { recursive: true, errorOnExist: true, force: false });
-    await assertNativePackageFiles(staged);
+    await assertNativePackageFiles(staged, nativeRequiredFiles(pack.metadata.packVersion));
+    await assertNativePackageMatchesMetadata(staged, pack.metadata, pack.metadata.packVersion);
     if (previous !== null) await rename(target, backup);
     try {
       await rename(staged, target);

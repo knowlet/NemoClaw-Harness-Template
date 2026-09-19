@@ -120,11 +120,13 @@ export const NATIVE_CONTRACT: Readonly<{
   dockerfile: string;
   start: string;
   harness: string;
+  harnessTest: string;
   launcher: string;
   metadata: string;
 }> = native.NATIVE_CONTRACT;
 export const NATIVE_PACK_VERSION: number = native.NATIVE_PACK_VERSION;
 export const NATIVE_REQUIRED_FILES: readonly string[] = native.NATIVE_REQUIRED_FILES;
+export const NATIVE_REQUIRED_FILES_V1: readonly string[] = native.NATIVE_REQUIRED_FILES_V1;
 export const defineNativeAgent: (input?: Partial<NativeAgentInput>) => NativeAgentDefinition = native.defineNativeAgent;
 export const renderNativeManifest: (input?: Partial<NativeAgentInput>) => string = native.renderNativeManifest;
 export const renderNativePolicy: (input?: Partial<NativeAgentInput>) => string = native.renderNativePolicy;

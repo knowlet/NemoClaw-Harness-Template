@@ -198,6 +198,8 @@ docker image ls | grep nemoclaw-sandbox-local
 
 Remove the work directory and the NemoClaw checkout when you are done; nothing else is left behind.
 
+If the runner reports a cleanup failure it prints the command output and exits nonzero. Absence is only accepted from a message that names this sandbox and says it is gone, so an unrecognised phrasing is reported as a failure rather than quietly counted as success.
+
 ## What is verified, and by whom
 
 The [runtime integration workflow](../.github/workflows/runtime-integration.yml) and the

@@ -9,7 +9,8 @@ import path from 'node:path';
 import {
   NATIVE_CONTRACT, NATIVE_PACK_VERSION, defineNativeAgent, renderNativeDockerfile, renderNativeHarness,
   renderNativeManifest, renderNativeMetadata, renderNativePackage, renderNativePolicy, renderNativeStart,
-  nativeAgentDir, nativeVerifySource, NATIVE_REQUIRED_FILES, scaffoldNativeAgent, readNativePackage, installNativeAgent,
+  nativeAgentDir, nativeVerifySource, NATIVE_REQUIRED_FILES, NATIVE_REQUIRED_FILES_V1,
+  scaffoldNativeAgent, readNativePackage, installNativeAgent,
   assertNativeCheckout, verifyNativeAgent,
 } from '../src/index.mjs';
 
@@ -263,6 +264,161 @@ test('the package test is a required file', () => {
   assert.ok(NATIVE_REQUIRED_FILES.includes(NATIVE_CONTRACT.harness));
 });
 
+test('a version 1 package without the harness test still installs', async () => {
+  const root = await tempDir();
+  try {
+    const checkout = await fakeCheckout(path.join(root, 'NemoClaw'));
+    const pack = path.join(root, 'legacy');
+    await scaffoldNativeAgent(pack, { name: 'legacy' });
+    await rm(path.join(pack, NATIVE_CONTRACT.harnessTest));
+    const metadata = JSON.parse(await readFile(path.join(pack, NATIVE_CONTRACT.metadata), 'utf8'));
+    metadata.packVersion = 1;
+    await writeFile(path.join(pack, NATIVE_CONTRACT.metadata), JSON.stringify(metadata, null, 2));
+    const read = await readNativePackage(pack);
+    assert.equal(read.metadata.packVersion, 1);
+    const installed = await installNativeAgent(pack, { nemoclawRoot: checkout });
+    const files = await readdir(installed.agentDir);
+    assert.ok(files.includes(NATIVE_CONTRACT.harness));
+    assert.ok(!files.includes(NATIVE_CONTRACT.harnessTest));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('the current pack version requires the harness test', async () => {
+  const root = await tempDir();
+  try {
+    const pack = path.join(root, 'current');
+    await scaffoldNativeAgent(pack, { name: 'current' });
+    const metadata = JSON.parse(await readFile(path.join(pack, NATIVE_CONTRACT.metadata), 'utf8'));
+    assert.equal(metadata.packVersion, 2);
+    assert.equal(NATIVE_PACK_VERSION, 2);
+    assert.ok(NATIVE_REQUIRED_FILES.includes(NATIVE_CONTRACT.harnessTest));
+    assert.ok(!NATIVE_REQUIRED_FILES_V1.includes(NATIVE_CONTRACT.harnessTest));
+    await rm(path.join(pack, NATIVE_CONTRACT.harnessTest));
+    await assert.rejects(
+      () => readNativePackage(pack),
+      (error) => error.code === 'INVALID_PACKAGE' && error.message.includes(NATIVE_CONTRACT.harnessTest),
+    );
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('an unknown pack version is refused', async () => {
+  const root = await tempDir();
+  try {
+    const pack = path.join(root, 'future');
+    await scaffoldNativeAgent(pack, { name: 'future' });
+    const metadata = JSON.parse(await readFile(path.join(pack, NATIVE_CONTRACT.metadata), 'utf8'));
+    metadata.packVersion = 99;
+    await writeFile(path.join(pack, NATIVE_CONTRACT.metadata), JSON.stringify(metadata, null, 2));
+    await assert.rejects(() => readNativePackage(pack), (error) => error.code === 'INVALID_PACKAGE');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('a package whose parts disagree with its metadata is refused', async () => {
+  const root = await tempDir();
+  try {
+    const cases = [
+      ['renamed-manifest', async (pack) => {
+        const manifest = await readFile(path.join(pack, NATIVE_CONTRACT.manifest), 'utf8');
+        await writeFile(path.join(pack, NATIVE_CONTRACT.manifest), manifest.replace('name: pkg', 'name: other'));
+      }],
+      ['foreign-dockerfile', async (pack) => {
+        const dockerfile = await readFile(path.join(pack, NATIVE_CONTRACT.dockerfile), 'utf8');
+        await writeFile(path.join(pack, NATIVE_CONTRACT.dockerfile), dockerfile.split('agents/pkg/').join('agents/other/'));
+      }],
+      ['other-revision', async (pack) => {
+        const metadata = JSON.parse(await readFile(path.join(pack, NATIVE_CONTRACT.metadata), 'utf8'));
+        metadata.contract.revision = 'f'.repeat(40);
+        await writeFile(path.join(pack, NATIVE_CONTRACT.metadata), JSON.stringify(metadata, null, 2));
+      }],
+    ];
+    for (const [label, mutate] of cases) {
+      const pack = path.join(root, label);
+      await scaffoldNativeAgent(pack, { name: 'pkg' });
+      await mutate(pack);
+      await assert.rejects(() => readNativePackage(pack), (error) => error.code === 'INVALID_PACKAGE', label);
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('version 1 metadata without a contract block still installs', async () => {
+  const root = await tempDir();
+  try {
+    const checkout = await fakeCheckout(path.join(root, 'NemoClaw'));
+    const pack = path.join(root, 'older');
+    await scaffoldNativeAgent(pack, { name: 'older' });
+    await rm(path.join(pack, NATIVE_CONTRACT.harnessTest));
+    const metadata = JSON.parse(await readFile(path.join(pack, NATIVE_CONTRACT.metadata), 'utf8'));
+    delete metadata.contract;
+    metadata.packVersion = 1;
+    await writeFile(path.join(pack, NATIVE_CONTRACT.metadata), JSON.stringify(metadata, null, 2));
+    const installed = await installNativeAgent(pack, { nemoclawRoot: checkout });
+    assert.ok((await readdir(installed.agentDir)).includes(NATIVE_CONTRACT.harness));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('the current pack version must record the upstream contract', async () => {
+  const root = await tempDir();
+  try {
+    const pack = path.join(root, 'no-contract');
+    await scaffoldNativeAgent(pack, { name: 'no-contract' });
+    const metadata = JSON.parse(await readFile(path.join(pack, NATIVE_CONTRACT.metadata), 'utf8'));
+    delete metadata.contract;
+    await writeFile(path.join(pack, NATIVE_CONTRACT.metadata), JSON.stringify(metadata, null, 2));
+    await assert.rejects(() => readNativePackage(pack), (error) => error.code === 'INVALID_PACKAGE');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('equivalent manifest and Dockerfile spellings are accepted', async () => {
+  const root = await tempDir();
+  try {
+    const variants = [
+      ['quoted-name', async (pack) => {
+        const manifest = await readFile(path.join(pack, NATIVE_CONTRACT.manifest), 'utf8');
+        await writeFile(path.join(pack, NATIVE_CONTRACT.manifest), manifest.replace('name: pkg', 'name: "pkg"'));
+      }],
+      ['commented-name', async (pack) => {
+        const manifest = await readFile(path.join(pack, NATIVE_CONTRACT.manifest), 'utf8');
+        await writeFile(path.join(pack, NATIVE_CONTRACT.manifest), manifest.replace('name: pkg', 'name: pkg  # required'));
+      }],
+      ['nested-name-before-top-level', async (pack) => {
+        const manifest = await readFile(path.join(pack, NATIVE_CONTRACT.manifest), 'utf8');
+        await writeFile(path.join(pack, NATIVE_CONTRACT.manifest), 'config:' + String.fromCharCode(10) + '  name: something-else' + String.fromCharCode(10) + manifest);
+      }],
+      ['uniformly-indented-manifest', async (pack) => {
+        await writeFile(path.join(pack, NATIVE_CONTRACT.manifest), '  name: pkg' + String.fromCharCode(10) + '  description: indented' + String.fromCharCode(10));
+      }],
+      ['indented-name', async (pack) => {
+        const manifest = await readFile(path.join(pack, NATIVE_CONTRACT.manifest), 'utf8');
+        await writeFile(path.join(pack, NATIVE_CONTRACT.manifest), manifest.replace('name: pkg', 'name:   pkg'));
+      }],
+      ['copy-without-trailing-slash', async (pack) => {
+        await writeFile(
+          path.join(pack, NATIVE_CONTRACT.dockerfile),
+          ['FROM node:24-bookworm-slim', 'USER root', 'COPY agents/pkg /opt/pkg', 'RUN chmod +x /opt/pkg/harness.mjs', ''].join(String.fromCharCode(10)),
+        );
+      }],
+    ];
+    for (const [label, mutate] of variants) {
+      const pack = path.join(root, label);
+      await scaffoldNativeAgent(pack, { name: 'pkg' });
+      await mutate(pack);
+      await readNativePackage(pack);
+    }
+    const lookalike = path.join(root, 'lookalike-name');
+    await scaffoldNativeAgent(lookalike, { name: 'pkg' });
+    const dockerfile = await readFile(path.join(lookalike, NATIVE_CONTRACT.dockerfile), 'utf8');
+    await writeFile(path.join(lookalike, NATIVE_CONTRACT.dockerfile), dockerfile.split('agents/pkg/').join('agents/pkg-extra/'));
+    await assert.rejects(() => readNativePackage(lookalike), (error) => error.code === 'INVALID_PACKAGE');
+    const commented = path.join(root, 'comment-only-reference');
+    await scaffoldNativeAgent(commented, { name: 'pkg' });
+    await writeFile(path.join(commented, NATIVE_CONTRACT.dockerfile), 'FROM node:24-bookworm-slim' + String.fromCharCode(10) + '# copies agents/pkg later' + String.fromCharCode(10) + 'USER root' + String.fromCharCode(10));
+    await assert.rejects(() => readNativePackage(commented), (error) => error.code === 'INVALID_PACKAGE');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('nativeAgentDir stays inside the checkout agents directory', () => {
   assert.equal(nativeAgentDir('/tmp/NemoClaw', 'my-harness'), path.join('/tmp/NemoClaw', 'agents', 'my-harness'));
+  for (const name of ['..', '../escape', 'a/b', 'A', '']) {
+    assert.throws(() => nativeAgentDir('/tmp/NemoClaw', name), (error) => error.code === 'USAGE', name);
+  }
 });

@@ -5,6 +5,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { classifyDestroyResult } from './lib/sandbox-cleanup.mjs';
 
 const REPO = fileURLToPath(new URL('../', import.meta.url));
 const REVISION = '1eb370f20530bd1312ac86a27782ef8501b28ade';
@@ -161,13 +162,12 @@ function providerEnvironment(flags, env) {
 
 function destroySandbox(checkout, sandbox, env) {
   const result = run('Delete the sandbox', [process.execPath, path.join(checkout, 'bin', 'nemoclaw.js'), sandbox, 'destroy', '--yes', '--force'], { env, allowFailure: true });
-  const text = (result.stdout + result.stderr).trim();
-  if (text) console.log('  ' + text.split(String.fromCharCode(10)).join(String.fromCharCode(10) + '  '));
-  if (result.code === 0) return { ok: true, detail: null };
-  // A sandbox that is already absent is a clean end state, not a failure.
-  if (/does not exist|already absent|not found/i.test(text)) return { ok: true, detail: null };
-  const detail = text.split(String.fromCharCode(10)).filter(Boolean).slice(-2).join(' ');
-  return { ok: false, detail: detail || ('exit ' + String(result.code)) };
+  // Only a sandbox-scoped absence message counts as a clean end state: a missing
+  // gateway, helper, or provider says nothing about whether the sandbox still exists.
+  const verdict = classifyDestroyResult({ code: result.code, stdout: result.stdout, stderr: result.stderr, sandbox });
+  if (verdict.text) console.log('  ' + verdict.text.split(String.fromCharCode(10)).join(String.fromCharCode(10) + '  '));
+  if (verdict.absent) console.log('  the sandbox was already absent; nothing to delete');
+  return verdict;
 }
 
 function deploy(checkout, flags, env, expected) {
