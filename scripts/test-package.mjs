@@ -24,7 +24,19 @@ try {
   assert.match(run(npm, ['test'], generated), /harness contract/);
   const lock = JSON.parse(await readFile(path.join(generated, 'package-lock.json'), 'utf8'));
   assert.equal(lock.name, 'packed-harness');
-  assert.ok(packed.files.some((file) => file.path === 'src/index.d.ts'));
+  assert.ok(packed.files.some((file) => file.path === 'dist/src/index.d.ts'));
+  // Consumers using classic node resolution ignore exports and follow the top-level types
+  // field. When it points at a deleted declaration, TypeScript falls through to the
+  // implementation sources and type-checks them under the consumer compiler options.
+  const tsc = path.join(process.cwd(), 'node_modules', '.bin', process.platform === 'win32' ? 'tsc.cmd' : 'tsc');
+  await writeFile(path.join(consumer, 'consumer.ts'), "import { createAdapter } from '@knowlet/nemoclaw-harness-sdk';\nconst adapter = createAdapter('typed');\nvoid adapter.metadata.name;\n");
+  for (const moduleResolution of ['node', 'NodeNext']) {
+    const config = path.join(consumer, 'tsconfig.' + moduleResolution + '.json');
+    await writeFile(config, JSON.stringify({ compilerOptions: { target: 'ES2022', module: moduleResolution === 'node' ? 'CommonJS' : 'NodeNext', moduleResolution, strict: true, skipLibCheck: true, esModuleInterop: true, noEmit: true, types: [] }, files: ['./consumer.ts'] }, null, 2) + '\n');
+    const trace = run(tsc, ['-p', config, '--traceResolution'], consumer);
+    assert.ok(trace.includes(path.join('dist', 'src', 'index.d.ts')), moduleResolution + ' must resolve the emitted declarations');
+    assert.ok(!trace.includes(path.join('src', 'index.ts')), moduleResolution + ' must not resolve the TypeScript source');
+  }
   assert.ok(packed.files.some((file) => file.path === 'NOTICE'));
   console.log('Package smoke passed: pack -> offline install -> ESM import -> CLI demo -> scaffold -> offline npm ci -> validate/demo/harness suite');
 } finally { await rm(temp, { recursive: true, force: true }); }

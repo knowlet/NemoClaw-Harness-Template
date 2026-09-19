@@ -9,19 +9,20 @@
   },
   "exports": {
     ".": {
-      "types": "./src/index.d.ts",
-      "import": "./src/index.mjs"
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
     },
     "./testing": {
-      "types": "./src/testing.d.ts",
-      "import": "./src/testkit.mjs"
+      "types": "./dist/src/testing.d.ts",
+      "import": "./dist/src/testing.js"
     }
   },
-  "types": "./src/index.d.ts",
+  "types": "./dist/src/index.d.ts",
   "bin": {
     "nha": "bin/nha.mjs"
   },
   "files": [
+    "dist",
     "src",
     "bin",
     "examples",
@@ -34,15 +35,17 @@
     "SECURITY.md"
   ],
   "scripts": {
-    "test": "node --test test/*.test.mjs",
+    "test": "npm run build && node --test test/*.test.mjs",
     "lint": "node scripts/lint.mjs",
     "demo": "node bin/nha.mjs demo",
     "doctor": "node bin/nha.mjs doctor",
-    "test:package": "node scripts/test-package.mjs",
-    "check": "npm run lint && npm test && npm run test:package",
-    "pack:sdk": "node scripts/pack-sdk.mjs",
+    "test:package": "npm run build && node scripts/test-package.mjs",
+    "check": "npm run lint && npm run typecheck && npm test && npm run test:package",
+    "pack:sdk": "npm run build && node scripts/pack-sdk.mjs",
     "test:harness": "node --test test/testkit.test.mjs",
-    "test:frameworks": "node scripts/test-frameworks.mjs"
+    "test:frameworks": "node scripts/test-frameworks.mjs",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "repository": {
     "type": "git",
@@ -55,5 +58,9 @@
     "nemoclaw",
     "adapter",
     "sdk"
-  ]
+  ],
+  "devDependencies": {
+    "@types/node": "22.20.3",
+    "typescript": "5.8.3"
+  }
 }

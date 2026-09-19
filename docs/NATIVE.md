@@ -36,9 +36,15 @@ Other revisions may rename, add, or reject fields. Re-verify after any upstream 
     node ../NemoClaw/bin/nemoclaw.js onboard --agent my-harness --name my-sandbox
 
 The package contains `manifest.yaml`, `policy-additions.yaml`, `Dockerfile`, `start.sh`, `launcher.sh`,
-`harness.mjs`, `dependency-review.md`, and `native-agent.json`.
+`harness.mjs`, `harness.test.mjs`, `dependency-review.md`, and `native-agent.json`.
 
-Those six files — manifest, policy, Dockerfile, start script, harness, and launcher — are `NATIVE_REQUIRED_FILES`. Every command validates that each one exists **as a regular file**, so a missing or replaced entry fails before anything is installed instead of during the image build.
+Those seven files — manifest, policy, Dockerfile, start script, harness, harness test, and launcher — are `NATIVE_REQUIRED_FILES`. Every command validates that each one exists **as a regular file**, so a missing or replaced entry fails before anything is installed instead of during the image build.
+
+`native-agent.json` records a `packVersion`, and the required set is versioned: version 2 needs all seven files above, while a version 1 package (generated before the harness test existed) stays installable without it, so upgrading the SDK does not invalidate a package you already have. An unknown version is refused.
+
+The validator also requires the parts to agree with each other: the manifest must declare the agent named in the metadata, the Dockerfile must build from the package directory `agents/<name>`, and any recorded upstream contract must be the revision this SDK targets.
+
+Those agreement checks tolerate equivalent spellings: the top-level manifest name is read through optional quotes and a trailing comment, and the Dockerfile only has to reference `agents/<name>` on a line that is not a comment (a trailing slash or a different destination is fine, while a lookalike such as `agents/<name>-extra` is not). A version 2 package must record the upstream contract; a version 1 package may omit it, because the validator that produced it never required the field.
 
 ### Installing and replacing
 

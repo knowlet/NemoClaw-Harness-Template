@@ -21,12 +21,14 @@ image, creates the sandbox, and runs your harness inside it.
 ```bash
 git clone -b develop https://github.com/knowlet/NemoClaw-Harness-Template.git
 cd NemoClaw-Harness-Template
+npm ci --ignore-scripts
+npm run build
 node scripts/quickstart.mjs --workdir /tmp/nha-quickstart
 ```
 
 That runner performs the whole tutorial in order and prints every command as it goes:
 
-1. checks Node, Docker, and git
+1. checks Node, Docker, and git (and builds this SDK from TypeScript if `dist/` is absent)
 2. clones `NVIDIA/NemoClaw` and checks out `1eb370f20530bd1312ac86a27782ef8501b28ade`, then runs
    `npm ci`, `npm --prefix nemoclaw ci`, and `npm run build:cli`
 3. installs the checksum-pinned OpenShell CLI, gateway, and sandbox through NemoClaw's own installer
@@ -34,18 +36,24 @@ That runner performs the whole tutorial in order and prints every command as it 
 5. asks the real NemoClaw loader whether it accepts the agent
 6. onboards the agent and runs the harness inside the resulting sandbox
 
-It ends with `QUICKSTART OK`. Add `--destroy` to delete the sandbox at the end, `--name` and
-`--sandbox` to pick different names, or `--dry-run` to see the steps without running them.
+It runs the package test before installing, and it prints `QUICKSTART OK` only when the deploy succeeded and the cleanup you asked for also succeeded. Add `--destroy` to delete the sandbox at the end, `--customize` to change the payload and redeploy it, `--name` and `--sandbox` to pick different names, or `--dry-run` to see the steps without running them.
 
 ## The same steps, one at a time
 
 Use this path if you want to see each step, or if something needs debugging.
 
-### 1. Get NemoClaw at the pinned revision and build its CLI
+Put both repositories in one work directory so every path below is unambiguous. These commands are written to run from `~/nha-work/NemoClaw-Harness-Template`, with the NemoClaw checkout beside it.
 
 ```bash
+mkdir -p ~/nha-work && cd ~/nha-work
 git clone https://github.com/NVIDIA/NemoClaw.git
-cd NemoClaw
+git clone -b develop https://github.com/knowlet/NemoClaw-Harness-Template.git
+```
+
+### 1. Build the NemoClaw CLI at the pinned revision
+
+```bash
+cd ~/nha-work/NemoClaw
 git checkout 1eb370f20530bd1312ac86a27782ef8501b28ade
 npm ci --ignore-scripts --no-audit --no-fund
 npm --prefix nemoclaw ci --ignore-scripts --no-audit --no-fund
@@ -74,8 +82,12 @@ by hand from a single tarball leaves onboarding stuck later.
 cd ../NemoClaw-Harness-Template
 node bin/nha.mjs native init ./my-harness --name my-harness --model your-managed-model
 node bin/nha.mjs native install ./my-harness --nemoclaw ../NemoClaw
+node --test my-harness/harness.test.mjs
+node bin/nha.mjs native install ./my-harness --nemoclaw ../NemoClaw
 node bin/nha.mjs native verify --nemoclaw ../NemoClaw --name my-harness
 ```
+
+`--test` runs the test that ships inside the package, and `native install` copies your package into the checkout.
 
 `native verify` runs the checkout's real loader and prints `loaderAccepted: true` when NemoClaw resolves
 your agent and selects its Dockerfile. It always prints `deploymentVerified: false` — loader
@@ -124,29 +136,33 @@ image build, sandbox, and policy without mixing in model quality.
 
 ## Make it your harness
 
-`agents/my-harness/` is ordinary source you own:
+Your package lives in one place: the directory `native init` created (`my-harness/` in the work directory above). **That is the source you edit.** `native install` copies it into the NemoClaw checkout at `agents/my-harness/`, so the copy inside the checkout is installed output — editing it there is overwritten by the next install.
 
-- `harness.mjs` is the payload. Replace it with your entrypoint, or keep it and shell out to your
-  runtime.
-- `manifest.yaml` declares `runtime.headless_command` (how tasks are invoked) and
-  `binary_path` (an executable NemoClaw checks during setup). Keep the launcher at
-  `/usr/local/bin/<name>` pointing at your runtime.
-- `policy-additions.yaml` is deny-by-default. Add the endpoints your harness actually needs, and
-  nothing more.
-- `Dockerfile` installs your dependencies. NemoClaw stages the checkout as the build context, so
-  reference files as `agents/<name>/...`.
+What is in the package:
 
-After editing, reinstall and start a fresh sandbox:
+- `harness.mjs` is the payload. Replace it with your entrypoint, or keep it and shell out to your runtime.
+- `manifest.yaml` declares `runtime.headless_command` (how tasks are invoked) and `binary_path` (an executable NemoClaw checks during setup). Keep the launcher at `/usr/local/bin/<name>` pointing at your runtime.
+- `policy-additions.yaml` is deny-by-default. Add the endpoints your harness actually needs, and nothing more.
+- `Dockerfile` installs your dependencies. NemoClaw stages the checkout as the build context, so reference files as `agents/<name>/...`.
+- `harness.test.mjs` is the package test. It runs on the host with `node --test` and never needs to run inside the image. Keep it passing as you change the payload; the quickstart runner runs it before every install.
+
+The whole loop, in the order that keeps you from deploying a stale image:
 
 ```bash
+# 1. edit my-harness/harness.mjs, and keep harness.test.mjs in step with it
+node --test my-harness/harness.test.mjs
 node bin/nha.mjs native install ./my-harness --nemoclaw ../NemoClaw --replace
 node ../NemoClaw/bin/nemoclaw.js my-sandbox destroy --yes --force
 node ../NemoClaw/bin/nemoclaw.js onboard --agent my-harness --name my-sandbox \
   --no-gpu --no-sandbox-gpu --non-interactive --yes --yes-i-accept-third-party-software --fresh
+node ../NemoClaw/bin/nemoclaw.js my-sandbox exec -- /usr/local/bin/my-harness your-task
 ```
 
-`--replace` only overwrites directories this SDK installed. A hand-written or vendor-provided agent
-directory is refused on purpose.
+Destroying the sandbox before re-onboarding is not optional: NemoClaw keeps the running sandbox and its image, so skipping it leaves the previous payload in place.
+
+`node scripts/quickstart.mjs --customize` runs exactly this loop, and fails unless the redeployed sandbox returns the **new** output. That is how this section is checked in CI rather than trusted.
+
+`--replace` only overwrites directories this SDK installed. A hand-written or vendor-provided agent directory is refused on purpose.
 
 ## Troubleshooting
 
@@ -181,6 +197,8 @@ docker image ls | grep nemoclaw-sandbox-local
 ```
 
 Remove the work directory and the NemoClaw checkout when you are done; nothing else is left behind.
+
+If the runner reports a cleanup failure it prints the command output and exits nonzero. Absence is only accepted from a message that names this sandbox and says it is gone, so an unrecognised phrasing is reported as a failure rather than quietly counted as success.
 
 ## What is verified, and by whom
 

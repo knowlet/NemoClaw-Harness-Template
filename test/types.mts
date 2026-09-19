@@ -1,4 +1,19 @@
-import { createAdapter, defineAdapter, runHarness, createInferenceClient, buildOpenShellCommand } from '@knowlet/nemoclaw-harness-sdk';
+import {
+  VERSION,
+  createAdapter,
+  defineAdapter,
+  runHarness,
+  createInferenceClient,
+  buildOpenShellCommand,
+  defineNativeAgent,
+  renderNativeLauncher,
+  verifyNativeAgent,
+  type NativeAgentDefinition,
+  type NativeVerificationReport,
+} from '@knowlet/nemoclaw-harness-sdk';
+
+const exactVersion: '0.3.0' = VERSION;
+void exactVersion;
 const adapter = defineAdapter(createAdapter('typed-harness'));
 const pending: Promise<{ stdout: string }> = runHarness(adapter, 'hello', { cwd: '/tmp' });
 void pending;
@@ -10,6 +25,18 @@ void client.chat([{ role: 'user', content: 'hello' }], { stream: true });
 adapter.runtime.command.push('unsafe');
 const argv: string[] = buildOpenShellCommand({ name: 'x', image: 'repo:dev', policy: 'p', task: 'x', allowMutableImage: true });
 void argv;
+
+const native: NativeAgentDefinition = defineNativeAgent({ name: 'typed-native' });
+const binaryPath: string = native.binaryPath;
+void binaryPath;
+const launcher: string = renderNativeLauncher(native);
+void launcher;
+const verification: Promise<NativeVerificationReport> = verifyNativeAgent({
+  nemoclawRoot: '/tmp/NemoClaw',
+  name: native.name,
+});
+void verification;
+
 import { runSuite, SUITE_VERSION, createMockInferenceServer, type SuiteReport } from '@knowlet/nemoclaw-harness-sdk/testing';
 const report: Promise<SuiteReport> = runSuite({ version: SUITE_VERSION, name: 'typed-suite', cases: [{ name: 'echo', task: 'x', expect: { stdout: 'x' } }] }, { adapter });
 void report; void createMockInferenceServer;

@@ -34,8 +34,8 @@ for (const file of ['README.md', 'README.zh-TW.md', 'NOTICE', 'docs/SDK.md', 'do
   if (!/UNOFFICIAL|非官方/.test(await readFile(file, 'utf8'))) throw new Error(`Missing notice: ${file}`);
 }
 // Native packaging is revision-locked; every published claim must name the same upstream revision.
-const pinned = /revision: '([0-9a-f]{40})'/.exec(await readFile('src/native.mjs', 'utf8'))?.[1];
-if (!pinned) throw new Error('src/native.mjs must declare the pinned NemoClaw revision');
+const pinned = /revision: '([0-9a-f]{40})'/.exec(await readFile('src/native.ts', 'utf8'))?.[1];
+if (!pinned) throw new Error('src/native.ts must declare the pinned NemoClaw revision');
 for (const file of ['README.md', 'README.zh-TW.md', 'docs/NATIVE.md', 'docs/QUICKSTART.md', '.github/workflows/runtime-integration.yml', '.github/workflows/quickstart.yml']) {
   if (!(await readFile(file, 'utf8')).includes(pinned)) throw new Error(`Pinned NemoClaw revision missing from ${file}`);
 }

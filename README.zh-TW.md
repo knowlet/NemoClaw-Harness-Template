@@ -20,6 +20,8 @@
 ```bash
 git clone -b develop https://github.com/knowlet/NemoClaw-Harness-Template.git
 cd NemoClaw-Harness-Template
+npm ci --ignore-scripts
+npm run build
 node scripts/quickstart.mjs --workdir /tmp/nha-quickstart
 ```
 
@@ -119,7 +121,8 @@ node bin/nha.mjs native verify --nemoclaw ../NemoClaw --name my-harness
 ```
 
 產生的內容包含 `manifest.yaml`、`policy-additions.yaml`、`Dockerfile`、`start.sh`、
-`harness.mjs`、`dependency-review.md` 與 `native-agent.json`。NemoClaw 會在 Docker driver 上
+`launcher.sh`、`harness.mjs`、`harness.test.mjs`、`dependency-review.md` 與
+`native-agent.json`。套件自帶測試，安裝前可在本機執行。NemoClaw 會在 Docker driver 上
 自行建置這個 Dockerfile，並套用產生的 deny-by-default policy。
 
 `native verify` 會載入 checkout 真正編譯出來的 loader，回報 `listed`、`loaderAccepted` 與解析到
