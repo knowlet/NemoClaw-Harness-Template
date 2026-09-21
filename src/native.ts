@@ -404,15 +404,38 @@ async function gitHeadRevision(root: string): Promise<string | null> {
   });
 }
 
+async function gitTopLevel(root: string): Promise<string | null> {
+  const child = spawn('git', ['-C', root, 'rev-parse', '--show-toplevel'], {
+    shell: false,
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  const output: Buffer[] = [];
+  child.stdout.on('data', (chunk) => output.push(chunk));
+  return new Promise((resolve) => {
+    child.once('error', () => resolve(null));
+    child.once('close', async (code) => {
+      if (code !== 0) return resolve(null);
+      const reportedRoot = Buffer.concat(output).toString('utf8').trim();
+      if (reportedRoot.length === 0) return resolve(null);
+      try { resolve(await realpath(reportedRoot)); }
+      catch { resolve(null); }
+    });
+  });
+}
+
 async function readNativeCheckout(nemoclawRoot: string | undefined, { allowUnsupportedUpstream = false }: NativeCheckoutOptions = {}): Promise<NativeCheckoutInfo> {
   if (!nemoclawRoot) fail('USAGE', 'A NemoClaw source checkout is required');
-  const root = path.resolve(nemoclawRoot);
+  let root;
+  try { root = await realpath(nemoclawRoot); }
+  catch { fail('NOT_A_CHECKOUT', 'NemoClaw source checkout not found at the supplied path'); }
   let manifest;
   try { manifest = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')); }
   catch { fail('NOT_A_CHECKOUT', 'NemoClaw source checkout not found at the supplied path'); }
   if (manifest.name !== 'nemoclaw' || !(await exists(path.join(root, NATIVE_CONTRACT.agentRoot)))) {
     fail('NOT_A_CHECKOUT', 'The supplied path is not a NemoClaw source checkout');
   }
+  const gitRoot = await gitTopLevel(root);
+  if (!gitRoot || gitRoot !== root) fail('NOT_A_CHECKOUT', 'The supplied NemoClaw path is not the root of a Git checkout');
   const revision = await gitHeadRevision(root);
   if (!revision) fail('NOT_A_CHECKOUT', 'The supplied NemoClaw path is not a Git checkout with a readable HEAD revision');
   const supportedUpstream = revision === NATIVE_CONTRACT.revision;

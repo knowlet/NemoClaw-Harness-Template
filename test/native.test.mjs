@@ -141,13 +141,23 @@ test('installNativeAgent registers the package in a checkout', async () => {
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('checkout and package validation fail closed', async () => {
+test('nested source archives are rejected while missing and non-Git paths fail closed', async () => {
   const root = await tempDir();
   try {
     await assert.rejects(() => assertNativeCheckout(path.join(root, 'missing')), (error) => error.code === 'NOT_A_CHECKOUT');
     await mkdir(path.join(root, 'not-a-checkout'));
     await writeFile(path.join(root, 'not-a-checkout', 'package.json'), JSON.stringify({ name: 'something-else' }));
     await assert.rejects(() => assertNativeCheckout(path.join(root, 'not-a-checkout')), (error) => error.code === 'NOT_A_CHECKOUT');
+    const outer = path.join(root, 'outer');
+    const nested = path.join(outer, 'archive', 'NemoClaw');
+    await fakeCheckout(outer);
+    await mkdir(path.join(nested, 'agents'), { recursive: true });
+    await writeFile(path.join(nested, 'package.json'), JSON.stringify({ name: 'nemoclaw' }) + '\n');
+    await assert.rejects(() => assertNativeCheckout(nested, { allowUnsupportedUpstream: true }), (error) => error.code === 'NOT_A_CHECKOUT');
+    const nonGit = path.join(root, 'non-git');
+    await mkdir(path.join(nonGit, 'agents'), { recursive: true });
+    await writeFile(path.join(nonGit, 'package.json'), JSON.stringify({ name: 'nemoclaw' }) + '\n');
+    await assert.rejects(() => assertNativeCheckout(nonGit, { allowUnsupportedUpstream: true }), (error) => error.code === 'NOT_A_CHECKOUT');
     await mkdir(path.join(root, 'empty'));
     await assert.rejects(() => readNativePackage(path.join(root, 'empty')), (error) => error.code === 'INVALID_PACKAGE');
     await assert.rejects(() => installNativeAgent(path.join(root, 'empty'), { nemoclawRoot: root }), (error) => error.code === 'INVALID_PACKAGE');
@@ -155,7 +165,7 @@ test('checkout and package validation fail closed', async () => {
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('checkout revision is required and unsupported revisions need explicit opt-in', async () => {
+test('normal checkouts are accepted in compatibility mode', async () => {
   const root = await tempDir();
   try {
     const checkout = await fakeCheckout(path.join(root, 'NemoClaw'));
@@ -164,6 +174,19 @@ test('checkout revision is required and unsupported revisions need explicit opt-
       (error) => error.code === 'UNSUPPORTED_UPSTREAM' && error.message.includes(NATIVE_CONTRACT.revision),
     );
     assert.equal(await assertNativeCheckout(checkout, { allowUnsupportedUpstream: true }), checkout);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('Git worktrees remain valid checkouts when .git is a file', async () => {
+  const root = await tempDir();
+  try {
+    const checkout = await fakeCheckout(path.join(root, 'NemoClaw'));
+    const worktree = path.join(root, 'NemoClaw-worktree');
+    const result = spawnSync('git', ['-C', checkout, 'worktree', 'add', '-q', '-b', 'native-test-worktree', worktree, 'HEAD'], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    await mkdir(path.join(worktree, 'agents'), { recursive: true });
+    assert.equal((await readFile(path.join(worktree, '.git'), 'utf8')).startsWith('gitdir:'), true);
+    assert.equal(await assertNativeCheckout(worktree, { allowUnsupportedUpstream: true }), worktree);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
