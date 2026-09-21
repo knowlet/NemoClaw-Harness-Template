@@ -95,6 +95,18 @@ Two validation gaps the same review thread raised in `src/native.ts` were also s
 
 Local verification: `npm run check` passes with 118 tests, and the packed-consumer smoke compiles the strict classic-resolution consumer.
 
+## Upstream compatibility qualification
+
+The compatibility guard was reviewed twice. The live workflow then exposed three defects that local tests could not reach, because each one only appears on a clean runner with a real gateway.
+
+| Symptom | Root cause | Fix | Evidence |
+| --- | --- | --- | --- |
+| Every case stopped at SANDBOX_PREFLIGHT_FAILED | The job installed only the standalone `openshell` CLI and then probed a sandbox before any gateway had been registered or started, so NemoClaw onboarding, the step that starts the managed gateway, never ran | The job installs the runtime through the pinned `scripts/install-openshell.sh` and starts the Docker-driver gateway with the pinned `startDockerDriverGateway()` before the probe, then requires the selected gateway to report a live connection | Run [35589773058](https://github.com/knowlet/NemoClaw-Harness-Template/actions/runs/35589773058) reached onboarding for the first time; the final run passed |
+| The probe still failed once the gateway existed | The absence classifier required the sandbox name in the output, but the pinned CLI answers a missing sandbox with a structured status that never repeats the name | The classifier accepts that structured miss for the one sandbox the command named, strips ANSI colour codes, and keeps failing closed on gateway or provider wording | Unit tests use the captured response; the deploy cases claim ownership before onboarding |
+| Onboarding refused the generated name: sandbox name too long (max 19 chars) | The runner budgeted 31 characters and joined a prefix that already ended with a hyphen | Names are built from the case label and the trailing characters of the run token, satisfying NemoClaw's 1-19 character routed-name contract | Run [35590309978](https://github.com/knowlet/NemoClaw-Harness-Template/actions/runs/35590309978) onboards both cases |
+
+Live qualification, run [35590309978](https://github.com/knowlet/NemoClaw-Harness-Template/actions/runs/35590309978) on commit 058053f: the pinned checkout `1eb370f` (`supportedUpstream: true`) and the candidate `main` `f2c0316` (`supportedUpstream: false`) both completed checkout, build, scaffold, install, loader, gateway binding, ownership preflight, onboarding, in-sandbox execution returning `Echo: NHA_COMPAT_OK`, and cleanup. The job gate requires every stage, including the gateway bootstrap, to pass; a committed workflow is still not evidence until a run reports success.
+
 ## Limits
 
 No real-model quality benchmark, DeepSeek runtime boot, dual-architecture qualification, GPU inference, or lifecycle/snapshot/restore test is claimed. Native packaging registers one agent for one pinned NemoClaw revision; other NemoClaw-managed operations (snapshots, recovery, lifecycle verbs) remain unimplemented. Filesystem and egress security are established only for explicit assertions that actually passed, not by an SDK status flag.
