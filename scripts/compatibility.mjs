@@ -4,7 +4,7 @@
 //        [--build] [--deploy]
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rename, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
@@ -26,6 +26,12 @@ const MAX_TAIL_BYTES = 4096;
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
 const TIMEOUT_TERM_GRACE_MS = 250;
 const TIMEOUT_SETTLE_MS = 1000;
+// Bounded cleanup after an interrupt: the runner must not hang while the job is
+// already being cancelled.
+const INTERRUPT_CLEANUP_BUDGET_MS = 120 * 1000;
+const INTERRUPT_CLEANUP_COMMAND_MS = 60 * 1000;
+const DEFAULT_GATEWAY_PORT = 8080;
+const GATEWAY_NAME = /^nemoclaw(?:-(\d+))?$/;
 const LABEL = /^[a-z][a-z0-9-]{0,31}$/;
 const NAME = /^[a-z][a-z0-9-]{0,31}$/;
 const TOKEN = /^[a-z0-9][a-z0-9-]{0,31}$/;
@@ -186,6 +192,19 @@ function terminateProcess(child, signal) {
   }
 }
 
+// Every command runs in its own process group, so the runner can end one that is
+// still running when the job is cancelled. Without this a killed runner leaves
+// its onboarding child alive.
+const activeCommands = new Set();
+
+export function terminateActiveCommands(signal = 'SIGKILL') {
+  let terminated = 0;
+  for (const child of activeCommands) {
+    if (terminateProcess(child, signal)) terminated += 1;
+  }
+  return terminated;
+}
+
 export function run(argv, { cwd, env = process.env, timeoutMs = DEFAULT_TIMEOUT_MS, marker } = {}) {
   return new Promise((resolve) => {
     const started = Date.now();
@@ -205,6 +224,7 @@ export function run(argv, { cwd, env = process.env, timeoutMs = DEFAULT_TIMEOUT_
     const stdout = createCapture();
     const stderr = createCapture();
     const detector = createMarkerDetector(marker);
+    activeCommands.add(child);
     let settled = false;
     let timedOut = false;
     let timeoutCleanupStarted = false;
@@ -214,6 +234,7 @@ export function run(argv, { cwd, env = process.env, timeoutMs = DEFAULT_TIMEOUT_
     const finish = (result) => {
       if (settled) return;
       settled = true;
+      activeCommands.delete(child);
       clearTimeout(timer);
       clearTimeout(killTimer);
       clearTimeout(settleTimer);
@@ -300,6 +321,105 @@ function gatewayArgs(flags) {
 }
 
 /**
+ * Resolve the one gateway binding this run may touch.
+ *
+ * NemoClaw derives its gateway from NEMOCLAW_GATEWAY_PORT: the default port maps
+ * to the bare nemoclaw gateway and any other port to nemoclaw-<port>. A
+ * --gateway that disagrees with that derivation would make the ownership probe
+ * and the cleanup act on a different gateway than onboarding, and the cleanup
+ * would then report an already-absent sandbox while the real one survived. The
+ * binding is resolved once, before any gateway command, and onboarding receives
+ * the port explicitly.
+ */
+export function resolveGatewayBinding(flags = {}, env = process.env) {
+  const configured = String(env.NEMOCLAW_GATEWAY_PORT ?? '').trim();
+  let port;
+  if (configured) {
+    port = Number(configured);
+    if (!/^\d+$/.test(configured) || !Number.isInteger(port) || port < 1 || port > 65535) {
+      return {
+        errorCode: 'GATEWAY_PORT_INVALID',
+        detail: 'NEMOCLAW_GATEWAY_PORT=' + configured + ' is not a usable TCP port',
+      };
+    }
+  } else if (flags.gateway) {
+    const match = GATEWAY_NAME.exec(flags.gateway);
+    if (!match) {
+      return {
+        errorCode: 'GATEWAY_BINDING_MISMATCH',
+        detail:
+          'gateway ' + flags.gateway + ' is outside the NemoClaw gateway namespace, so its port cannot be derived; set NEMOCLAW_GATEWAY_PORT to the port that gateway listens on',
+      };
+    }
+    port = match[1] === undefined ? DEFAULT_GATEWAY_PORT : Number(match[1]);
+  } else {
+    return {
+      errorCode: 'GATEWAY_PORT_UNSET',
+      detail:
+        'NEMOCLAW_GATEWAY_PORT is not set, so the gateway NemoClaw onboarding would use is unknown; set it, or pass --gateway with a name in the NemoClaw namespace',
+    };
+  }
+  const name = port === DEFAULT_GATEWAY_PORT ? 'nemoclaw' : 'nemoclaw-' + port;
+  if (flags.gateway && flags.gateway !== name) {
+    return {
+      errorCode: 'GATEWAY_BINDING_MISMATCH',
+      detail:
+        '--gateway ' + flags.gateway + ' does not match NEMOCLAW_GATEWAY_PORT=' + port + ', which resolves to ' + name,
+    };
+  }
+  return { name, port };
+}
+
+function gatewayWorkspace(env = process.env) {
+  return String(env.OPENSSHELL_WORKSPACE ?? '').trim() || 'default';
+}
+
+/** The environment onboarding and the sandbox task run with, bound to one port. */
+function deployEnv(flags) {
+  return flags.gatewayPort
+    ? { ...process.env, NEMOCLAW_GATEWAY_PORT: String(flags.gatewayPort) }
+    : process.env;
+}
+
+function summarizeStatus(report) {
+  if (report.interrupted) return 'interrupted';
+  if (report.cases.length === 0) return 'running';
+  if (report.cases.some((item) => item.status === 'running')) return 'running';
+  return report.cases.every((item) => item.status === 'passed')
+    ? 'passed'
+    : report.cases.some((item) => item.status === 'blocked') ? 'blocked' : 'failed';
+}
+
+// The runner persists the report while a case is still running and again from
+// the interrupt path, so writes are serialized and each uses its own temporary
+// name before the atomic rename.
+let reportWriteChain = Promise.resolve();
+let reportWriteCounter = 0;
+
+export function writeReportAtomically(target, report) {
+  const next = reportWriteChain
+    .catch(() => {})
+    .then(async () => {
+      reportWriteCounter += 1;
+      const temporary = target + '.tmp-' + String(process.pid) + '-' + String(reportWriteCounter);
+      await writeFile(temporary, JSON.stringify(report, null, 2) + String.fromCharCode(10), { mode: 0o600 });
+      await rename(temporary, target);
+    });
+  reportWriteChain = next.catch(() => {});
+  return next;
+}
+
+async function assertReportPathFree(target) {
+  try {
+    await stat(target);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return;
+    throw error;
+  }
+  throw new Error('Report already exists: ' + target);
+}
+
+/**
  * True only when the table or JSON status output reports a live connection.
  * "Disconnected" contains "connected", so the match requires a boundary.
  */
@@ -373,7 +493,7 @@ export function createSandboxName(prefix, label, token = randomUUID().replaceAll
   return prefixed && prefixed.length <= SANDBOX_NAME_MAX ? prefixed : labeled;
 }
 
-async function qualify(item, flags, workspace, runToken) {
+async function qualify(item, flags, workspace, runToken, record = async () => {}) {
   const expectedRevision = flags.expected.get(item.label) ?? (item.label === 'pinned' ? NATIVE_CONTRACT.revision : null);
   const result = {
     label: item.label,
@@ -397,6 +517,22 @@ async function qualify(item, flags, workspace, runToken) {
   result.stages.checkout = { status: 'passed', category: result.supportedUpstream ? 'supported-contract' : 'candidate-contract', revision: revision.revision };
   if (expectedRevision && revision.revision !== expectedRevision) {
     return failStage(result, 'checkout', { status: 'failed', category: 'contract', errorCode: 'PIN_MISMATCH', expectedRevision, actualRevision: revision.revision });
+  }
+  if (flags.deploy) {
+    result.gateway = flags.gatewayError
+      ? { name: null, port: null, workspace: gatewayWorkspace() }
+      : { name: flags.gateway, port: flags.gatewayPort, workspace: gatewayWorkspace() };
+    // Resolve the binding before any gateway command or build: a --gateway that
+    // disagrees with NEMOCLAW_GATEWAY_PORT would make the probe, the onboarding,
+    // and the cleanup act on different gateways.
+    if (flags.gatewayError) {
+      return failStage(result, 'gateway', {
+        status: 'failed',
+        category: 'infrastructure',
+        errorCode: flags.gatewayError.errorCode,
+        error: sanitize(flags.gatewayError.detail),
+      });
+    }
   }
   if (flags.build) {
     if (!await buildCheckout(result, item.checkout)) {
@@ -462,15 +598,29 @@ async function qualify(item, flags, workspace, runToken) {
   result.sandbox.ownership = preflight.ok ? 'owned' : preflight.preexisting ? 'pre-existing' : 'unknown';
   result.sandbox.preflight = preflight.ok ? 'absent' : preflight.preexisting ? 'present' : 'failed';
   if (!preflight.ok) return failStage(result, 'preflight', result.stages.preflight);
+  // The ownership receipt reaches disk before onboarding can create anything, so
+  // a runner that is killed mid-run still leaves the workflow a list of the
+  // resources this run owns.
+  result.status = 'running';
+  await record(result);
 
-  const onboard = await run([process.execPath, cli, 'onboard', '--name', sandbox, '--agent', name, '--no-gpu', '--no-sandbox-gpu', '--non-interactive', '--yes', '--yes-i-accept-third-party-software', '--fresh'], { cwd: item.checkout });
+  const onboard = await run([process.execPath, cli, 'onboard', '--name', sandbox, '--agent', name, '--no-gpu', '--no-sandbox-gpu', '--non-interactive', '--yes', '--yes-i-accept-third-party-software', '--fresh'], { cwd: item.checkout, env: deployEnv(flags) });
   result.stages.onboard = commandResult(onboard, 'product');
   if (result.stages.onboard.status !== 'passed') {
     result.status = result.stages.onboard.status === 'blocked' ? 'blocked' : 'failed';
     result.failureClass = result.stages.onboard.category;
     return result;
   }
-  const task = await run([process.execPath, cli, sandbox, 'exec', '--', '/usr/local/bin/' + name, 'NHA_COMPAT_OK'], { cwd: item.checkout, marker: 'Echo: NHA_COMPAT_OK' });
+  // Onboarding received the resolved port, so the sandbox must now exist on the
+  // gateway this run owns. Without this check an upstream revision that derived
+  // a different gateway would leave the sandbox outside the receipt, and the
+  // cleanup would report an already-absent resource while it survived.
+  const lookup = await run(['openshell', 'sandbox', 'get', ...gatewayArgs(flags), sandbox], { cwd: item.checkout, timeoutMs: 30000 });
+  result.stages.sandbox = lookup.code === 0
+    ? { status: 'passed', category: 'infrastructure', sandbox, gateway: flags.gateway }
+    : { status: 'failed', category: 'product', errorCode: 'SANDBOX_GATEWAY_MISMATCH', sandbox, gateway: flags.gateway, exitCode: lookup.code, signal: lookup.signal, stdoutTail: tail(lookup.stdout), stderrTail: tail(lookup.stderr), durationMs: lookup.durationMs };
+  if (result.stages.sandbox.status !== 'passed') return failStage(result, 'sandbox', result.stages.sandbox);
+  const task = await run([process.execPath, cli, sandbox, 'exec', '--', '/usr/local/bin/' + name, 'NHA_COMPAT_OK'], { cwd: item.checkout, env: deployEnv(flags), marker: 'Echo: NHA_COMPAT_OK' });
   result.stages.exec = commandResult(task, 'product');
   if (result.stages.exec.status === 'passed' && !task.markerSeen) {
     result.stages.exec = { status: 'failed', category: 'product', errorCode: 'SMOKE_MISMATCH', stdoutTail: tail(task.stdout), stderrTail: tail(task.stderr), stdoutTruncated: task.stdoutTruncated, stderrTruncated: task.stderrTruncated, durationMs: task.durationMs };
@@ -498,6 +648,10 @@ export async function cleanupSandbox(result, flags, runCommand = run) {
     };
     return;
   }
+  // The interrupt path and the main loop can both reach this sandbox, so a
+  // cleanup that already ran or is running is not repeated.
+  if (result.stages.cleanup?.status === 'passed' || result.stages.cleanup?.status === 'running') return;
+  result.stages.cleanup = { status: 'running', sandbox, ownership: 'owned' };
   const deletion = await runCommand(['openshell', 'sandbox', 'delete', ...gatewayArgs(flags), sandbox], { timeoutMs: 120000 });
   const verdict = classifyDestroyResult({ ...deletion, sandbox });
   const cleanup = commandResult(deletion, 'infrastructure');
@@ -514,9 +668,41 @@ export async function cleanupSandbox(result, flags, runCommand = run) {
   }
 }
 
+/**
+ * Delete the sandboxes this run owns, bounded so a cancelled job still exits.
+ * Cases that never claimed ownership are left alone.
+ */
+export async function cleanupOwnedCases(report, flags, runCommand = run) {
+  const deadline = Date.now() + INTERRUPT_CLEANUP_BUDGET_MS;
+  for (const result of report.cases ?? []) {
+    if (result.sandbox?.ownership !== 'owned' || !result.sandbox.name) continue;
+    if (result.stages?.cleanup?.status === 'passed') continue;
+    if (Date.now() >= deadline) {
+      result.stages.cleanup = {
+        status: 'blocked',
+        category: 'infrastructure',
+        errorCode: 'CLEANUP_DEADLINE',
+        sandbox: result.sandbox.name,
+        ownership: 'owned',
+      };
+      continue;
+    }
+    await cleanupSandbox(result, flags, (argv, options = {}) =>
+      runCommand(argv, {
+        ...options,
+        timeoutMs: Math.min(options.timeoutMs ?? INTERRUPT_CLEANUP_COMMAND_MS, INTERRUPT_CLEANUP_COMMAND_MS),
+      }),
+    );
+  }
+}
+
 export async function main(args = process.argv.slice(2)) {
   const flags = parse(args);
   if (flags.help) { usage(); return; }
+  const binding = resolveGatewayBinding(flags);
+  if (binding.errorCode) flags.gatewayError = binding;
+  else { flags.gateway = binding.name; flags.gatewayPort = binding.port; }
+  if (flags.json) await assertReportPathFree(flags.json);
   const workspace = await mkdtemp(path.join(os.tmpdir(), 'nha-compatibility-'));
   const report = {
     unofficial: true,
@@ -525,22 +711,58 @@ export async function main(args = process.argv.slice(2)) {
     sdkVersion: VERSION,
     nativeContract: { upstream: NATIVE_CONTRACT.upstream, revision: NATIVE_CONTRACT.revision },
     mode: { build: flags.build === true, deploy: flags.deploy === true },
+    status: 'running',
     cases: [],
   };
+  const persist = async () => {
+    if (flags.json) await writeReportAtomically(flags.json, report);
+  };
+  const record = async (result) => {
+    if (!report.cases.includes(result)) report.cases.push(result);
+    report.status = summarizeStatus(report);
+    await persist();
+  };
+  let interrupt = null;
+  let interruptTask = null;
+  const onSignal = (signal) => {
+    if (interruptTask) return;
+    interrupt = signal;
+    report.interrupted = { signal, at: new Date().toISOString() };
+    report.status = 'interrupted';
+    terminateActiveCommands();
+    interruptTask = (async () => {
+      try {
+        await cleanupOwnedCases(report, flags);
+      } catch (error) {
+        report.cleanupError = sanitize(error?.message ?? 'interrupt cleanup failed');
+      }
+      await persist().catch(() => {});
+    })();
+  };
+  process.once('SIGINT', onSignal);
+  process.once('SIGTERM', onSignal);
   const runToken = flags.sandboxToken ?? randomUUID().replaceAll('-', '').slice(0, 12);
   try {
     for (const item of flags.checkouts) {
-      const result = await qualify(item, flags, workspace, runToken);
+      if (interrupt) break;
+      const result = await qualify(item, flags, workspace, runToken, record);
+      await record(result);
       await cleanupSandbox(result, flags);
-      report.cases.push(result);
+      await record(result);
     }
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
-  report.status = report.cases.every((item) => item.status === 'passed')
-    ? 'passed'
-    : report.cases.some((item) => item.status === 'blocked') ? 'blocked' : 'failed';
-  if (flags.json) await writeFile(flags.json, JSON.stringify(report, null, 2) + String.fromCharCode(10), { flag: 'wx' });
+  if (interruptTask) {
+    await interruptTask;
+    report.status = summarizeStatus(report);
+    await persist().catch(() => {});
+    console.log(JSON.stringify(report, null, 2));
+    process.exitCode = interrupt === 'SIGINT' ? 130 : 143;
+    return report;
+  }
+  report.status = summarizeStatus(report);
+  await persist();
   console.log(JSON.stringify(report, null, 2));
   if (report.status !== 'passed') process.exitCode = 1;
   return report;

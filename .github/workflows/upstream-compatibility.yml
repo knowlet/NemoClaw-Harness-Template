@@ -140,8 +140,9 @@ jobs:
               import { execFileSync } from "node:child_process";
               const report = JSON.parse(fs.readFileSync("reports/nemoclaw-compatibility.json", "utf8"));
               for (const item of report.cases ?? []) {
-                if (item.sandbox?.ownership !== "owned" || item.stages?.cleanup?.status === "passed" || !item.sandbox.name) continue;
-                try { execFileSync("openshell", ["sandbox", "delete", "-g", "nemoclaw", item.sandbox.name], { stdio: "inherit" }); }
+                if (item.sandbox?.ownership !== "owned" || !item.sandbox.name || !item.gateway?.name) continue;
+                if (item.stages?.cleanup?.status === "passed") continue;
+                try { execFileSync("openshell", ["sandbox", "delete", "-g", item.gateway.name, item.sandbox.name], { stdio: "inherit" }); }
                 catch { /* qualification reports the original cleanup result */ }
               }
             '
