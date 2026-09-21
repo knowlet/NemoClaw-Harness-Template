@@ -201,6 +201,7 @@ export function run(argv, { cwd, env = process.env, timeoutMs = DEFAULT_TIMEOUT_
     const detector = createMarkerDetector(marker);
     let settled = false;
     let timedOut = false;
+    let timeoutCleanupStarted = false;
     let timer;
     let killTimer;
     let settleTimer;
@@ -224,6 +225,7 @@ export function run(argv, { cwd, env = process.env, timeoutMs = DEFAULT_TIMEOUT_
     child.stderr.on('data', (chunk) => collect(stderr, chunk));
     timer = setTimeout(() => {
       timedOut = true;
+      timeoutCleanupStarted = true;
       terminateProcess(child, 'SIGTERM');
       killTimer = setTimeout(() => {
         terminateProcess(child, 'SIGKILL');
@@ -237,9 +239,11 @@ export function run(argv, { cwd, env = process.env, timeoutMs = DEFAULT_TIMEOUT_
       }, TIMEOUT_TERM_GRACE_MS);
     }, timeoutMs);
     child.once('error', (error) => {
+      if (timeoutCleanupStarted) return;
       finish({ code: null, signal: null, timedOut, errorCode: error.code ?? 'SPAWN_FAILED' });
     });
     child.once('close', (code, signal) => {
+      if (timeoutCleanupStarted) return;
       finish({ code, signal, timedOut });
     });
   });

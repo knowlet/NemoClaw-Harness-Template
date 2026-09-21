@@ -34,7 +34,7 @@ async function fakeCheckout(root) {
   await writeFile(path.join(root, 'bin/nemoclaw.js'), [
     "const action = process.argv[2];",
     "if (action === 'onboard') process.exit(Number(process.env.NHA_ONBOARD_EXIT || '0'));",
-    "process.stdout.write('Echo: NHA_COMPAT_OK\n');",
+    "process.stdout.write('Echo: NHA_COMPAT_OK\\n');",
     '',
   ].join('\n'));
   await chmod(path.join(root, 'bin/nemoclaw.js'), 0o755);
@@ -47,6 +47,16 @@ async function fakeCheckout(root) {
   ]) execFileSync('git', ['-C', root, ...args], { stdio: 'pipe' });
   return execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 }
+
+test('fake NemoClaw CLI fixture passes node --check', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nha-compat-test-'));
+  try {
+    const checkout = path.join(root, 'NemoClaw');
+    await fakeCheckout(checkout);
+    const result = spawnSync(process.execPath, ['--check', path.join(checkout, 'bin', 'nemoclaw.js')], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 function runCompatibility(args, env = {}) {
   return spawnSync(process.execPath, [path.join(repo, 'scripts/compatibility.mjs'), ...args], {
@@ -170,9 +180,36 @@ test('onboarding failure still cleans up an owned sandbox', async () => {
     assert.equal(result.status, 1, result.stderr);
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.cases[0].stages.onboard.status, 'failed');
+    assert.equal(parsed.cases[0].stages.onboard.exitCode, 7);
     assert.equal(parsed.cases[0].sandbox.ownership, 'owned');
     assert.equal(parsed.cases[0].stages.cleanup.status, 'passed');
     assert.equal((await readFile(deleted, 'utf8')).trim(), parsed.cases[0].sandbox.name);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('successful deploy runs preflight, onboard, exec, and cleanup with fake tooling', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nha-compat-test-'));
+  try {
+    const checkout = path.join(root, 'NemoClaw');
+    await fakeCheckout(checkout);
+    const tools = await fakeTooling(root);
+    const deleted = path.join(root, 'deleted.log');
+    const result = runCompatibility([
+      '--checkout', 'candidate=' + checkout,
+      '--deploy',
+      '--sandbox-prefix', 'nha-compat',
+      '--sandbox-token', 'testtoken',
+    ], { PATH: tools + ':' + process.env.PATH, NHA_DELETE_LOG: deleted });
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    const candidate = parsed.cases[0];
+    assert.equal(candidate.status, 'passed');
+    assert.equal(candidate.sandbox.ownership, 'owned');
+    assert.equal(candidate.stages.preflight.status, 'passed');
+    assert.equal(candidate.stages.onboard.status, 'passed');
+    assert.equal(candidate.stages.exec.status, 'passed');
+    assert.equal(candidate.stages.cleanup.status, 'passed');
+    assert.equal((await readFile(deleted, 'utf8')).trim(), candidate.sandbox.name);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -219,6 +256,35 @@ test('run bounds timeout settlement when a descendant retains stdio', async () =
   const result = await run([process.execPath, '-e', script], { timeoutMs: 50 });
   assert.equal(result.timedOut, true);
   assert.ok(Date.now() - started < 3000);
+});
+
+test('run kills a detached-stdio descendant after the direct child closes on timeout', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nha-compat-timeout-'));
+  const pidFile = path.join(root, 'descendant.pid');
+  const descendant = [
+    "process.on('SIGTERM', () => {});",
+    'setInterval(() => {}, 1000);',
+  ].join('');
+  const parent = [
+    "const { spawn } = require('node:child_process');",
+    "const { writeFileSync } = require('node:fs');",
+    "const descendant = spawn(process.execPath, ['-e', " + JSON.stringify(descendant) + "], { stdio: 'ignore' });",
+    "writeFileSync(" + JSON.stringify(pidFile) + ", String(descendant.pid));",
+    'setInterval(() => {}, 1000);',
+  ].join('');
+  try {
+    const result = await run([process.execPath, '-e', parent], { timeoutMs: 250 });
+    const pid = Number(await readFile(pidFile, 'utf8'));
+    assert.equal(result.timedOut, true);
+    assert.equal(result.signal, 'SIGKILL');
+    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+  } finally {
+    try {
+      const pid = Number(await readFile(pidFile, 'utf8'));
+      process.kill(pid, 'SIGKILL');
+    } catch {}
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('cleanup never deletes a sandbox without ownership', async () => {
