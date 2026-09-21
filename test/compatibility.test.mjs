@@ -337,19 +337,30 @@ test('cleanup deletes a claimed sandbox on the bound gateway', async () => {
   assert.equal(result.stages.cleanup.status, 'passed');
 });
 
-test('compatibility sandbox names are unique, bounded, and label scoped', () => {
-  const first = createSandboxName('nha-compat', 'candidate', '11111111');
-  const second = createSandboxName('nha-compat', 'candidate', '22222222');
-  const pinned = createSandboxName('nha-compat-12345678901234567890', 'pinned', '333333333333');
-  const candidate = createSandboxName('nha-compat-12345678901234567890', 'candidate', '333333333333');
-  assert.notEqual(first, second);
-  assert.match(first, /^nha-compat-candidate-[a-z0-9]+$/);
-  assert.ok(first.length <= 31);
-  assert.notEqual(pinned, candidate);
-  assert.match(pinned, /-pinned-333333333333$/);
-  assert.match(candidate, /-candidate-333333333333$/);
-  assert.ok(pinned.length <= 31);
-  assert.ok(candidate.length <= 31);
+// NemoClaw caps a routed sandbox name at 19 characters, requires a leading
+// lowercase letter and a trailing letter or number, and rejects consecutive
+// hyphens. Onboarding refuses a name that breaks any of those rules.
+test('compatibility sandbox names satisfy the NemoClaw routed-name contract', () => {
+  const workflowToken = '35588915776-1';
+  const names = [
+    createSandboxName('nha-compat-35588915776', 'pinned', workflowToken),
+    createSandboxName('nha-compat-35588915776', 'candidate', workflowToken),
+    createSandboxName('nha-compat', 'candidate', '11111111'),
+    createSandboxName('nha-compat', 'candidate', '22222222'),
+    createSandboxName('nha-compat-12345678901234567890', 'pinned', '333333333333'),
+    createSandboxName('x', 'case', '9'),
+    createSandboxName('', '', ''),
+  ];
+  for (const name of names) {
+    assert.ok(name.length >= 1 && name.length <= 19, name);
+    assert.match(name, /^[a-z][a-z0-9-]*[a-z0-9]$/, name);
+    assert.doesNotMatch(name, /--/, name);
+  }
+  assert.equal(names[0], 'pinned-915776-1');
+  assert.equal(names[1], 'candidate-915776-1');
+  assert.notEqual(names[2], names[3]);
+  assert.notEqual(names[0], names[1]);
+  assert.match(names[4], /^pinned-/);
 });
 
 test('run keeps a rolling tail and detects a marker independently of the tail', async () => {

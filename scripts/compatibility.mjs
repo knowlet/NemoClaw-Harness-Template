@@ -3,7 +3,7 @@
 //        [--name NAME] [--json REPORT] [--sandbox-prefix PREFIX] [--sandbox-token TOKEN] [--gateway NAME]
 //        [--build] [--deploy]
 import { spawn } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -336,16 +336,41 @@ async function buildCheckout(result, checkout) {
   return true;
 }
 
+// NemoClaw caps a routed sandbox name at NAME_MAX_LENGTH characters and rejects
+// consecutive hyphens, so onboarding refuses anything longer than this.
+const SANDBOX_NAME_MAX = 19;
+
+function sandboxNamePart(value, max, fromEnd = false) {
+  const cleaned = String(value ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  const sliced = fromEnd ? cleaned.slice(-max) : cleaned.slice(0, max);
+  return sliced.replace(/^-+|-+$/g, '');
+}
+
+function fitSandboxLabel(labelPart, tokenPart) {
+  const direct = labelPart + '-' + tokenPart;
+  if (direct.length <= SANDBOX_NAME_MAX) return direct;
+  const budget = SANDBOX_NAME_MAX - tokenPart.length - 1;
+  const trimmed = labelPart.slice(0, Math.max(budget, 0)).replace(/-+$/g, '');
+  return trimmed.length >= 3 ? trimmed + '-' + tokenPart : ('nha' + tokenPart).slice(0, SANDBOX_NAME_MAX);
+}
+
+/**
+ * Build a sandbox name NemoClaw accepts: 1-19 characters, starting with a
+ * lowercase letter, lowercase letters, numbers, and single internal hyphens
+ * only, ending with a letter or number. The token keeps the run identity, so
+ * the name stays unique per run when the prefix does not fit.
+ */
 export function createSandboxName(prefix, label, token = randomUUID().replaceAll('-', '').slice(0, 12)) {
-  const suffix = String(token).replace(/[^a-z0-9]/gi, '').toLowerCase().slice(-12) || 'run';
-  const normalizedLabel = String(label).replace(/[^a-z0-9-]/gi, '').toLowerCase() || 'case';
-  const labelPart = normalizedLabel.length <= 12
-    ? normalizedLabel
-    : normalizedLabel.slice(0, 7) + '-' + createHash('sha256').update(normalizedLabel).digest('hex').slice(0, 4);
-  const normalizedPrefix = String(prefix).replace(/[^a-z0-9-]/gi, '').toLowerCase() || 'nha-compat';
-  const prefixBudget = 31 - labelPart.length - suffix.length - 2;
-  const prefixPart = prefixBudget > 0 ? normalizedPrefix.slice(0, prefixBudget) : '';
-  return [prefixPart, labelPart, suffix].filter(Boolean).join('-');
+  const tokenPart = sandboxNamePart(token, 8, true) || 'run';
+  const labelPart = sandboxNamePart(label, 12) || 'case';
+  const prefixPart = sandboxNamePart(prefix, SANDBOX_NAME_MAX);
+  const labeled = fitSandboxLabel(labelPart, tokenPart);
+  const prefixed = prefixPart ? prefixPart + '-' + labeled : '';
+  return prefixed && prefixed.length <= SANDBOX_NAME_MAX ? prefixed : labeled;
 }
 
 async function qualify(item, flags, workspace, runToken) {

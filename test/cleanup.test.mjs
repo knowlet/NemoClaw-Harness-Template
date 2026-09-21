@@ -119,6 +119,17 @@ test('preflight accepts the pinned structured not-found response', () => {
   assert.equal(confirmsSandboxPreflightAbsent(structured('provider openai not found'), sandbox), false);
   assert.equal(confirmsSandboxPreflightAbsent(structured('sandbox not found') + '\ngateway unavailable', sandbox), false);
 
+  assert.equal(confirmsSandboxAbsent(structured('sandbox not found'), sandbox), true);
+  assert.equal(confirmsSandboxAbsent(structured('sandbox my-sandbox not found'), sandbox), true);
+  assert.equal(confirmsSandboxAbsent(structured('sandbox other-sandbox not found'), sandbox), false);
+  assert.equal(confirmsSandboxAbsent(structured('gateway my-gateway not found'), sandbox), false);
+  assert.equal(confirmsSandboxAbsent(structured('provider openai not found'), sandbox), false);
+  assert.equal(confirmsSandboxAbsent('connection refused while deleting sandbox my-sandbox', sandbox), false);
+
+  const destroyed = classifyDestroyResult({ code: 1, stderr: structured('sandbox not found'), sandbox });
+  assert.equal(destroyed.ok, true);
+  assert.equal(destroyed.absent, true);
+
   const verdict = classifySandboxPreflightResult({
     code: 1,
     stderr: structured('sandbox not found'),

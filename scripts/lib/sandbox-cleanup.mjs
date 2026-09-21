@@ -19,8 +19,8 @@ const FAILURE_MARKER = /fail|denied|error|cannot|unable|refus/i;
 const QUOTED_NAME = '[\u0022\u0027]?'; // " or ' around the sandbox name
 const ANSI_RE = /\u001B\[[0-9;]*m/g;
 
-// A direct lookup for a missing sandbox is answered with a structured status
-// instead of prose that repeats the sandbox name:
+// A lookup or a delete for a missing sandbox is answered with a structured
+// status instead of prose that repeats the sandbox name:
 //   Error:   × code: 'Some requested entity was not found', message: "sandbox not found"
 // The lookup named exactly one sandbox and the message attributes the miss to a
 // sandbox, so this confirms absence for that name. A miss on the gateway or a
@@ -30,6 +30,28 @@ const STRUCTURED_NOT_FOUND =
 
 function escapeForRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * The pinned CLI answers a lookup or a delete for a missing sandbox with a
+ * structured status that never repeats the sandbox name. The command named
+ * exactly one sandbox, so a miss the CLI attributes to a sandbox confirms
+ * absence for that name; a gateway or provider miss names a different noun and
+ * stays unmatched.
+ */
+function structuredSandboxAbsencePattern(sandbox) {
+  return new RegExp(
+    '^(?:\u00D7\\s*)?' +
+      STRUCTURED_NOT_FOUND +
+      ',\\s*message:\\s*[\u0022\u0027]sandbox(?:\\s+' + QUOTED_NAME + escapeForRegExp(sandbox) + QUOTED_NAME + ')?\\s+(?:does not exist|not found)[\u0022\u0027][.!]?$',
+    'i',
+  );
+}
+
+function isStructuredSandboxAbsence(line, sandbox) {
+  return structuredSandboxAbsencePattern(sandbox).test(
+    line.replace(/^(?:error|warning)\s*:\s*/i, ''),
+  );
 }
 
 /**
@@ -45,8 +67,13 @@ export function confirmsSandboxAbsent(text, sandbox) {
     'i',
   );
   return text
+    .replace(ANSI_RE, '')
     .split(/\r?\n/)
-    .some((entry) => pattern.test(entry) && !FAILURE_MARKER.test(entry));
+    .some(
+      (entry) =>
+        isStructuredSandboxAbsence(entry.trim(), sandbox) ||
+        (pattern.test(entry) && !FAILURE_MARKER.test(entry)),
+    );
 }
 
 /** A zero exit is success. A nonzero exit is success only for a confirmed absence. */
@@ -91,8 +118,10 @@ export function classifySandboxPreflightResult({ code, stdout = '', stderr = '',
 
 /**
  * A lookup may use "not found" where destroy commands use a more explicit
- * absence phrase. Accept only a line that names this exact sandbox and has no
- * unrelated gateway/provider or deletion failure attached to it.
+ * absence phrase, and the pinned CLI may answer with a structured status that
+ * never repeats the sandbox name. Accept only a line that names this exact
+ * sandbox, or the structured miss for the one sandbox the command named, and
+ * has no unrelated gateway/provider or deletion failure attached to it.
  */
 export function confirmsSandboxPreflightAbsent(text, sandbox) {
   if (typeof text !== 'string' || typeof sandbox !== 'string' || sandbox === '') return false;
@@ -104,12 +133,7 @@ export function confirmsSandboxPreflightAbsent(text, sandbox) {
     new RegExp('^sandbox\\s+' + quoted + escaped + quoted + '\\s+not found[.!]?$', 'i'),
     new RegExp('^sandbox\\s+(?:does not|doesn\u0027t|no longer)\\s+exist\\s*[: -]\\s*' + quoted + escaped + quoted + '[.!]?$', 'i'),
     new RegExp('^no such sandbox\\s*[: -]\\s*' + quoted + escaped + quoted + '[.!]?$', 'i'),
-    new RegExp(
-      '^(?:\u00D7\\s*)?' +
-        STRUCTURED_NOT_FOUND +
-        ',\\s*message:\\s*[\u0022\u0027]sandbox(?:\\s+' + quoted + escaped + quoted + ')?\\s+(?:does not exist|not found)[\u0022\u0027][.!]?$',
-      'i',
-    ),
+    structuredSandboxAbsencePattern(sandbox),
   ];
   let matched = false;
   for (const entry of text.replace(ANSI_RE, '').split(/\r?\n/)) {
