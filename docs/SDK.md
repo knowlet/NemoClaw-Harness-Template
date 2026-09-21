@@ -81,7 +81,7 @@ Development exceptions are limited to HTTP loopback hostnames with the `/v1` pat
 
 ### Native NemoClaw packaging
 
-`renderNativePackage({ name, displayName?, description?, model?, harness? })` returns the file map for a native `agents/<name>/` package. `scaffoldNativeAgent` writes it exclusively, `readNativePackage` validates it, and `installNativeAgent` copies it into a NemoClaw checkout. `verifyNativeAgent({ nemoclawRoot, name })` executes that checkout real compiled loader and returns `listed`, `loaderAccepted`, `dockerfile`, `policyAdditions`, `workload`, and `deploymentVerified: false`.
+`renderNativePackage({ name, displayName?, description?, model?, harness? })` returns the file map for a native `agents/<name>/` package. `scaffoldNativeAgent` writes it exclusively, `readNativePackage` validates it, and `installNativeAgent` copies it into a NemoClaw checkout. Install and verify require a Git checkout whose `HEAD` exactly matches `NATIVE_CONTRACT.revision`; another revision is rejected with `UNSUPPORTED_UPSTREAM`. Pass `allowUnsupportedUpstream: true` only from an explicit compatibility qualification runner. `verifyNativeAgent({ nemoclawRoot, name })` executes that checkout real compiled loader and returns `listed`, `loaderAccepted`, `dockerfile`, `policyAdditions`, `workload`, `checkoutRevision`, `supportedUpstream`, and `deploymentVerified: false`.
 
 The layout is pinned to `NATIVE_CONTRACT.revision` and is internal to that upstream revision, not a public extension point. `readNativePackage` accepts only packages whose `native-agent.json` records this SDK pack format and version. See the [native packaging guide](NATIVE.md).
 
@@ -101,14 +101,14 @@ The layout is pinned to `NATIVE_CONTRACT.revision` and is internal to that upstr
 | `nha launch ...` | Execute that OpenShell command; creates a sandbox |
 | `nha doctor` | Check local binaries/version; not a compatibility or health certification |
 | `nha native init DIR --name NAME --model MODEL` | Write a NemoClaw-native `agents/<name>/` package on the local filesystem |
-| `nha native install DIR --nemoclaw CHECKOUT [--replace]` | Copy that package into a checkout agents/ directory |
-| `nha native verify --nemoclaw CHECKOUT --name NAME [--json FILE]` | Run the checkout real loader; reports loader acceptance, never deployment |
+| `nha native install DIR --nemoclaw CHECKOUT [--replace] [--allow-unsupported-upstream]` | Copy that package into a matching checkout; the opt-in is for compatibility qualification only |
+| `nha native verify --nemoclaw CHECKOUT --name NAME [--json FILE] [--allow-unsupported-upstream]` | Run the checkout real loader and report its revision; loader acceptance is not deployment |
 
 `--managed` and `--allow-host` are mutually exclusive, as are `--task` and `--task-file`. Use `node bin/nha.mjs` from a source checkout, or `nha` after installing the package into a project with its local bin on PATH. Do not send secrets in task arguments: OS process listings may expose argv. The headless DSH upstream surface requires argv; that limitation is documented in its candidate.
 
 ## Errors and stability
 
-Relevant codes include `INVALID_MANIFEST`, `INVALID_PACKAGE`, `NOT_A_CHECKOUT`, `NOT_BUILT`, `SAME_PATH`, `NOT_SDK_PACKAGE`, `INSTALL_FAILED`, `DESTINATION_EXISTS`, `VERIFY_FAILED`, `UNTRUSTED_CONFIG`, `INVALID_TASK`, `SPAWN_FAILED`, `PROCESS_FAILED`, `TIMEOUT`, `ABORTED`, `OUTPUT_LIMIT`, `INVALID_ENDPOINT`, `INVALID_PARAMETERS`, `HTTP_ERROR`, `RESPONSE_LIMIT`, `INVALID_RESPONSE`, `TRANSPORT_FAILED`, and `UNPINNED_IMAGE`.
+Relevant codes include `INVALID_MANIFEST`, `INVALID_PACKAGE`, `NOT_A_CHECKOUT`, `UNSUPPORTED_UPSTREAM`, `NOT_BUILT`, `SAME_PATH`, `NOT_SDK_PACKAGE`, `INSTALL_FAILED`, `DESTINATION_EXISTS`, `VERIFY_FAILED`, `UNTRUSTED_CONFIG`, `INVALID_TASK`, `SPAWN_FAILED`, `PROCESS_FAILED`, `TIMEOUT`, `ABORTED`, `OUTPUT_LIMIT`, `INVALID_ENDPOINT`, `INVALID_PARAMETERS`, `HTTP_ERROR`, `RESPONSE_LIMIT`, `INVALID_RESPONSE`, `TRANSPORT_FAILED`, and `UNPINNED_IMAGE`.
 
 This is a `0.x` community SDK with an explicitly alpha adapter schema. Pin the package version. Unknown schema versions fail closed; automatic migration is not implemented. Upstream NemoClaw/OpenShell/DeepSeek compatibility is separately recorded in [architecture](ARCHITECTURE.md), not guaranteed by our package version.
 

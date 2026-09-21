@@ -167,8 +167,9 @@ jobs:
       - name: Require all deployment checks to pass
         if: always()
         env:
+          NATIVE_LOADER_RESULT: ${{ steps.native-loader.outcome }}
           ONBOARD_RESULT: ${{ steps.onboard.outcome }}
           NATIVE_RESULT: ${{ steps.native.outcome }}
           BYOC_RESULT: ${{ steps.byoc.outcome }}
           EMBEDDED_RESULT: ${{ steps.embedded.outcome }}
-        run: test "$ONBOARD_RESULT/$NATIVE_RESULT/$BYOC_RESULT/$EMBEDDED_RESULT" = success/success/success/success
+        run: test "$NATIVE_LOADER_RESULT/$ONBOARD_RESULT/$NATIVE_RESULT/$BYOC_RESULT/$EMBEDDED_RESULT" = success/success/success/success/success

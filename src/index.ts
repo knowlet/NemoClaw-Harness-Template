@@ -138,7 +138,7 @@ export const renderNativeDependencyReview: (input?: Partial<NativeAgentInput>) =
 export const renderNativeMetadata: (input?: Partial<NativeAgentInput>) => string = native.renderNativeMetadata;
 export const renderNativePackage: (input?: Partial<NativeAgentInput>) => Readonly<Record<string, string>> = native.renderNativePackage;
 export const nativeAgentDir: (nemoclawRoot: string, name: string) => string = native.nativeAgentDir;
-export const assertNativeCheckout: (nemoclawRoot: string) => Promise<string> = native.assertNativeCheckout;
+export const assertNativeCheckout: (nemoclawRoot: string, options?: { allowUnsupportedUpstream?: boolean }) => Promise<string> = native.assertNativeCheckout;
 export const scaffoldNativeAgent: (
   destination: string,
   input?: Partial<NativeAgentInput>,
@@ -150,11 +150,12 @@ export const readNativePackage: (directory: string) => Promise<{
 }> = native.readNativePackage;
 export const installNativeAgent: (
   directory: string,
-  options: { nemoclawRoot: string; replace?: boolean },
+  options: { nemoclawRoot: string; replace?: boolean; allowUnsupportedUpstream?: boolean },
 ) => Promise<NativeInstallResult> = native.installNativeAgent;
 export const nativeVerifySource: () => string = native.nativeVerifySource;
 export const verifyNativeAgent: (options: {
   nemoclawRoot: string;
   name: string;
   timeoutMs?: number;
+  allowUnsupportedUpstream?: boolean;
 }) => Promise<NativeVerificationReport> = native.verifyNativeAgent;

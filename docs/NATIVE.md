@@ -19,7 +19,7 @@ packaging therefore records the revision it targets:
 
     NVIDIA/NemoClaw@1eb370f20530bd1312ac86a27782ef8501b28ade
 
-Other revisions may rename, add, or reject fields. Re-verify after any upstream change.
+The SDK reads the checkout Git `HEAD` before install or verify and requires this exact revision. Other revisions may rename, add, or reject fields; use the explicit compatibility qualification path before changing the pin.
 
 ## Commands
 
@@ -34,6 +34,8 @@ Other revisions may rename, add, or reject fields. Re-verify after any upstream 
 
     # 4. Onboard with the real NemoClaw CLI.
     node ../NemoClaw/bin/nemoclaw.js onboard --agent my-harness --name my-sandbox
+
+`native install` and `native verify` fail with `UNSUPPORTED_UPSTREAM` when the checkout Git `HEAD` is not `NATIVE_CONTRACT.revision`. The CLI accepts `--allow-unsupported-upstream` only as an explicit escape hatch for a compatibility qualification run; it records the actual checkout revision in its JSON result.
 
 The package contains `manifest.yaml`, `policy-additions.yaml`, `Dockerfile`, `start.sh`, `launcher.sh`,
 `harness.mjs`, `harness.test.mjs`, `dependency-review.md`, and `native-agent.json`.
@@ -100,7 +102,7 @@ records the outcome in `reports/` instead of inferring it.
 
 ## Limitations
 
-- One pinned upstream revision. This is a source-checkout integration, not a stable extension API.
+- One pinned upstream revision. The checkout must be a Git repository at that exact commit. This is a source-checkout integration, not a stable extension API.
 - The generator emits a deterministic echo starter, not an LLM. Replace `harness.mjs` (and
   `runtime.headless_command`) with your runtime, then re-verify.
 - `native install` refuses to overwrite an existing agent unless you pass `--replace`, and it replaces only directories this SDK installed.

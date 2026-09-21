@@ -19,6 +19,16 @@ async function tempDir() { return mkdtemp(path.join(os.tmpdir(), 'nha-native-tes
 async function fakeCheckout(root) {
   await mkdir(path.join(root, 'agents'), { recursive: true });
   await writeFile(path.join(root, 'package.json'), JSON.stringify({ name: 'nemoclaw', version: '0.1.0' }) + '\n');
+  for (const args of [
+    ['init', '-q'],
+    ['config', 'user.email', 'nha-tests@example.invalid'],
+    ['config', 'user.name', 'NHA tests'],
+    ['add', 'package.json'],
+    ['commit', '-qm', 'fixture'],
+  ]) {
+    const result = spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  }
   return root;
 }
 
@@ -120,11 +130,13 @@ test('installNativeAgent registers the package in a checkout', async () => {
     const checkout = await fakeCheckout(path.join(root, 'NemoClaw'));
     const pack = path.join(root, 'my-harness');
     await scaffoldNativeAgent(pack, { name: 'my-harness' });
-    const installed = await installNativeAgent(pack, { nemoclawRoot: checkout });
+    const installed = await installNativeAgent(pack, { nemoclawRoot: checkout, allowUnsupportedUpstream: true });
     assert.equal(installed.agentDir, path.join(checkout, 'agents', 'my-harness'));
+    assert.equal(installed.supportedUpstream, false);
+    assert.match(installed.checkoutRevision, /^[0-9a-f]{40}$/);
     assert.equal(await readFile(path.join(installed.agentDir, NATIVE_CONTRACT.manifest), 'utf8').then((text) => text.includes('name: my-harness')), true);
-    await assert.rejects(() => installNativeAgent(pack, { nemoclawRoot: checkout }), /already installed/);
-    const replaced = await installNativeAgent(pack, { nemoclawRoot: checkout, replace: true });
+    await assert.rejects(() => installNativeAgent(pack, { nemoclawRoot: checkout, allowUnsupportedUpstream: true }), /already installed/);
+    const replaced = await installNativeAgent(pack, { nemoclawRoot: checkout, replace: true, allowUnsupportedUpstream: true });
     assert.equal(replaced.name, 'my-harness');
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -143,11 +155,27 @@ test('checkout and package validation fail closed', async () => {
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('checkout revision is required and unsupported revisions need explicit opt-in', async () => {
+  const root = await tempDir();
+  try {
+    const checkout = await fakeCheckout(path.join(root, 'NemoClaw'));
+    await assert.rejects(
+      () => assertNativeCheckout(checkout),
+      (error) => error.code === 'UNSUPPORTED_UPSTREAM' && error.message.includes(NATIVE_CONTRACT.revision),
+    );
+    assert.equal(await assertNativeCheckout(checkout, { allowUnsupportedUpstream: true }), checkout);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('verifyNativeAgent refuses an unbuilt or invalid request', async () => {
   const root = await tempDir();
   try {
     const checkout = await fakeCheckout(path.join(root, 'NemoClaw'));
-    await assert.rejects(() => verifyNativeAgent({ nemoclawRoot: checkout, name: 'my-harness' }), (error) => error.code === 'NOT_BUILT');
+    await assert.rejects(
+      () => verifyNativeAgent({ nemoclawRoot: checkout, name: 'my-harness' }),
+      (error) => error.code === 'UNSUPPORTED_UPSTREAM',
+    );
+    await assert.rejects(() => verifyNativeAgent({ nemoclawRoot: checkout, name: 'my-harness', allowUnsupportedUpstream: true }), (error) => error.code === 'NOT_BUILT');
     await assert.rejects(() => verifyNativeAgent({ nemoclawRoot: checkout, name: 'Bad_Name' }), (error) => error.code === 'USAGE');
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -165,7 +193,7 @@ test('reserved names are refused wherever they can enter', async () => {
     metadata.agent.name = 'openclaw';
     await writeFile(path.join(pack, NATIVE_CONTRACT.metadata), JSON.stringify(metadata));
     await assert.rejects(() => readNativePackage(pack), (error) => error.code === 'INVALID_PACKAGE');
-    await assert.rejects(() => installNativeAgent(pack, { nemoclawRoot: checkout }), (error) => error.code === 'INVALID_PACKAGE');
+    await assert.rejects(() => installNativeAgent(pack, { nemoclawRoot: checkout, allowUnsupportedUpstream: true }), (error) => error.code === 'INVALID_PACKAGE');
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -192,9 +220,9 @@ test('install refuses a same-path package and keeps the installed one', async ()
     const checkout = await fakeCheckout(path.join(root, 'NemoClaw'));
     const pack = path.join(root, 'my-harness');
     await scaffoldNativeAgent(pack, { name: 'my-harness' });
-    const installed = await installNativeAgent(pack, { nemoclawRoot: checkout });
+    const installed = await installNativeAgent(pack, { nemoclawRoot: checkout, allowUnsupportedUpstream: true });
     await writeFile(path.join(installed.agentDir, 'KEEP.txt'), 'keep' + String.fromCharCode(10));
-    await assert.rejects(() => installNativeAgent(installed.agentDir, { nemoclawRoot: checkout, replace: true }), (error) => error.code === 'SAME_PATH');
+    await assert.rejects(() => installNativeAgent(installed.agentDir, { nemoclawRoot: checkout, replace: true, allowUnsupportedUpstream: true }), (error) => error.code === 'SAME_PATH');
     assert.ok((await readdir(installed.agentDir)).includes('KEEP.txt'));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -208,7 +236,7 @@ test('install never replaces an agent directory this SDK did not write', async (
     await writeFile(path.join(foreign, NATIVE_CONTRACT.manifest), 'name: handwritten' + String.fromCharCode(10) + '# UNTOUCHED' + String.fromCharCode(10));
     const pack = path.join(root, 'handwritten');
     await scaffoldNativeAgent(pack, { name: 'handwritten' });
-    await assert.rejects(() => installNativeAgent(pack, { nemoclawRoot: checkout, replace: true }), (error) => error.code === 'NOT_SDK_PACKAGE');
+    await assert.rejects(() => installNativeAgent(pack, { nemoclawRoot: checkout, replace: true, allowUnsupportedUpstream: true }), (error) => error.code === 'NOT_SDK_PACKAGE');
     assert.ok((await readFile(path.join(foreign, NATIVE_CONTRACT.manifest), 'utf8')).includes('UNTOUCHED'));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -219,8 +247,8 @@ test('install stages the replacement and leaves no staging directory behind', as
     const checkout = await fakeCheckout(path.join(root, 'NemoClaw'));
     const pack = path.join(root, 'my-harness');
     await scaffoldNativeAgent(pack, { name: 'my-harness' });
-    await installNativeAgent(pack, { nemoclawRoot: checkout });
-    const replaced = await installNativeAgent(pack, { nemoclawRoot: checkout, replace: true });
+    await installNativeAgent(pack, { nemoclawRoot: checkout, allowUnsupportedUpstream: true });
+    const replaced = await installNativeAgent(pack, { nemoclawRoot: checkout, replace: true, allowUnsupportedUpstream: true });
     assert.ok((await readdir(replaced.agentDir)).includes(NATIVE_CONTRACT.launcher));
     assert.deepEqual((await readdir(path.join(checkout, 'agents'))).sort(), ['my-harness']);
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -237,7 +265,7 @@ test('verify reports a timeout instead of a generic failure', async () => {
       await writeFile(entry, file.endsWith('defs.js') ? hang : 'module.exports = {};');
     }
     await assert.rejects(
-      () => verifyNativeAgent({ nemoclawRoot: checkout, name: 'my-harness', timeoutMs: 500 }),
+      () => verifyNativeAgent({ nemoclawRoot: checkout, name: 'my-harness', timeoutMs: 500, allowUnsupportedUpstream: true }),
       (error) => error.code === 'TIMEOUT',
     );
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -276,7 +304,7 @@ test('a version 1 package without the harness test still installs', async () => 
     await writeFile(path.join(pack, NATIVE_CONTRACT.metadata), JSON.stringify(metadata, null, 2));
     const read = await readNativePackage(pack);
     assert.equal(read.metadata.packVersion, 1);
-    const installed = await installNativeAgent(pack, { nemoclawRoot: checkout });
+    const installed = await installNativeAgent(pack, { nemoclawRoot: checkout, allowUnsupportedUpstream: true });
     const files = await readdir(installed.agentDir);
     assert.ok(files.includes(NATIVE_CONTRACT.harness));
     assert.ok(!files.includes(NATIVE_CONTRACT.harnessTest));
@@ -351,7 +379,7 @@ test('version 1 metadata without a contract block still installs', async () => {
     delete metadata.contract;
     metadata.packVersion = 1;
     await writeFile(path.join(pack, NATIVE_CONTRACT.metadata), JSON.stringify(metadata, null, 2));
-    const installed = await installNativeAgent(pack, { nemoclawRoot: checkout });
+    const installed = await installNativeAgent(pack, { nemoclawRoot: checkout, allowUnsupportedUpstream: true });
     assert.ok((await readdir(installed.agentDir)).includes(NATIVE_CONTRACT.harness));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
