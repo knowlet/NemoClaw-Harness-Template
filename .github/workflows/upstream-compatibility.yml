@@ -139,14 +139,13 @@ jobs:
               const report = JSON.parse(fs.readFileSync("reports/nemoclaw-compatibility.json", "utf8"));
               for (const item of report.cases ?? []) {
                 if (item.sandbox?.ownership !== "owned" || item.stages?.cleanup?.status === "passed" || !item.sandbox.name) continue;
-                try { execFileSync("openshell", ["sandbox", "delete", item.sandbox.name, "-g", "nemoclaw"], { stdio: "inherit" }); }
+                try { execFileSync("openshell", ["sandbox", "delete", "-g", "nemoclaw", item.sandbox.name], { stdio: "inherit" }); }
                 catch { /* qualification reports the original cleanup result */ }
               }
             '
           fi
           if test -f "$RUNNER_TEMP/compat-provider.pid"; then kill "$(cat "$RUNNER_TEMP/compat-provider.pid")" || true; fi
           if command -v openshell >/dev/null 2>&1; then
-            openshell gateway destroy -g nemoclaw || true
             openshell gateway remove nemoclaw || true
           fi
       - name: Upload compatibility report

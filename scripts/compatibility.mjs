@@ -291,8 +291,9 @@ function skipped(reason) { return { status: 'skipped', reason }; }
 /**
  * Bind every OpenShell command to one named gateway. Without this the probe and
  * the cleanup follow whatever gateway happens to be selected, so a case can
- * inspect one gateway and delete from another. The flag trails the command
- * because that is how NemoClaw's own OpenShell adapter invokes it.
+ * inspect one gateway and delete from another. The flag precedes the sandbox
+ * name because that is how NemoClaw's own OpenShell adapter builds the command,
+ * which keeps the name from being read as part of the flag.
  */
 function gatewayArgs(flags) {
   return flags.gateway ? ['-g', flags.gateway] : [];
@@ -428,7 +429,7 @@ async function qualify(item, flags, workspace, runToken) {
     result.stages.gateway = { status: 'passed', category: 'infrastructure', gateway: flags.gateway };
   }
   const sandbox = result.sandbox.name;
-  const preflightResult = await run(['openshell', 'sandbox', 'get', sandbox, ...gatewayArgs(flags)], { cwd: item.checkout, timeoutMs: 30000 });
+  const preflightResult = await run(['openshell', 'sandbox', 'get', ...gatewayArgs(flags), sandbox], { cwd: item.checkout, timeoutMs: 30000 });
   const preflight = classifySandboxPreflightResult({ ...preflightResult, sandbox });
   result.stages.preflight = preflight.ok
     ? { status: 'passed', category: 'infrastructure', sandbox, ownership: 'owned', preexisting: false }
@@ -472,7 +473,7 @@ export async function cleanupSandbox(result, flags, runCommand = run) {
     };
     return;
   }
-  const deletion = await runCommand(['openshell', 'sandbox', 'delete', sandbox, ...gatewayArgs(flags)], { timeoutMs: 120000 });
+  const deletion = await runCommand(['openshell', 'sandbox', 'delete', ...gatewayArgs(flags), sandbox], { timeoutMs: 120000 });
   const verdict = classifyDestroyResult({ ...deletion, sandbox });
   const cleanup = commandResult(deletion, 'infrastructure');
   if (verdict.ok) {

@@ -17,6 +17,16 @@ const ABSENCE_PHRASES = [
 // else it says about the sandbox, so it can never confirm absence.
 const FAILURE_MARKER = /fail|denied|error|cannot|unable|refus/i;
 const QUOTED_NAME = '[\u0022\u0027]?'; // " or ' around the sandbox name
+const ANSI_RE = /\u001B\[[0-9;]*m/g;
+
+// A direct lookup for a missing sandbox is answered with a structured status
+// instead of prose that repeats the sandbox name:
+//   Error:   × code: 'Some requested entity was not found', message: "sandbox not found"
+// The lookup named exactly one sandbox and the message attributes the miss to a
+// sandbox, so this confirms absence for that name. A miss on the gateway or a
+// provider reports a different noun and stays unmatched.
+const STRUCTURED_NOT_FOUND =
+  "(?:status:\\s*['\"]?NotFound['\"]?|code:\\s*['\"]Some requested entity was not found['\"])";
 
 function escapeForRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -94,9 +104,15 @@ export function confirmsSandboxPreflightAbsent(text, sandbox) {
     new RegExp('^sandbox\\s+' + quoted + escaped + quoted + '\\s+not found[.!]?$', 'i'),
     new RegExp('^sandbox\\s+(?:does not|doesn\u0027t|no longer)\\s+exist\\s*[: -]\\s*' + quoted + escaped + quoted + '[.!]?$', 'i'),
     new RegExp('^no such sandbox\\s*[: -]\\s*' + quoted + escaped + quoted + '[.!]?$', 'i'),
+    new RegExp(
+      '^(?:\u00D7\\s*)?' +
+        STRUCTURED_NOT_FOUND +
+        ',\\s*message:\\s*[\u0022\u0027]sandbox(?:\\s+' + quoted + escaped + quoted + ')?\\s+(?:does not exist|not found)[\u0022\u0027][.!]?$',
+      'i',
+    ),
   ];
   let matched = false;
-  for (const entry of text.split(/\r?\n/)) {
+  for (const entry of text.replace(ANSI_RE, '').split(/\r?\n/)) {
     const line = entry.trim().replace(/^(?:error|warning)\s*:\s*/i, '');
     if (!line) continue;
     if (!patterns.some((pattern) => pattern.test(line))) return false;

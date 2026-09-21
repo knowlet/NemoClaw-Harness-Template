@@ -72,20 +72,25 @@ async function fakeTooling(root) {
   await writeFile(path.join(tools, 'openshell'), [
     '#!/bin/sh',
     'if [ -n "$NHA_CALL_LOG" ]; then printf "%s\\n" "$*" >> "$NHA_CALL_LOG"; fi',
-    'if [ "$1" = "gateway" ] && [ "$2" = "select" ]; then',
+    'command="$1"',
+    'shift',
+    'if [ "$1" = "select" ] || [ "$1" = "get" ] || [ "$1" = "delete" ]; then subcommand="$1"; shift; fi',
+    'if [ "$1" = "-g" ]; then shift 2; fi',
+    'name="$1"',
+    'if [ "$command" = "gateway" ] && [ "$subcommand" = "select" ]; then',
     '  if [ -n "$NHA_GATEWAY_SELECT_EXIT" ]; then exit "$NHA_GATEWAY_SELECT_EXIT"; fi',
     '  exit 0',
     'fi',
-    'if [ "$1" = "status" ]; then',
+    'if [ "$command" = "status" ]; then',
     '  if [ "$NHA_GATEWAY_STATUS" = "Disconnected" ]; then echo "Status: Disconnected"; else echo "Status: Connected"; fi',
     '  exit 0',
     'fi',
-    'if [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then',
-    '  if [ "$NHA_EXISTING_SANDBOX" = "$3" ]; then echo "Sandbox $3 is running"; exit 0; fi',
-    '  echo "Error: sandbox $3 not found" >&2; exit 1',
+    'if [ "$command" = "sandbox" ] && [ "$subcommand" = "get" ]; then',
+    '  if [ "$NHA_EXISTING_SANDBOX" = "$name" ]; then echo "Sandbox $name is running"; exit 0; fi',
+    '  echo "Error:   \u00d7 code: \x27Some requested entity was not found\x27, message: \\"sandbox not found\\"" >&2; exit 1',
     'fi',
-    'if [ "$1" = "sandbox" ] && [ "$2" = "delete" ]; then',
-    '  if [ -n "$NHA_DELETE_LOG" ]; then echo "$3" >> "$NHA_DELETE_LOG"; fi',
+    'if [ "$command" = "sandbox" ] && [ "$subcommand" = "delete" ]; then',
+    '  if [ -n "$NHA_DELETE_LOG" ]; then echo "$name" >> "$NHA_DELETE_LOG"; fi',
     '  exit 0',
     'fi',
     'exit 1',
@@ -245,8 +250,8 @@ test('gateway binding selects and verifies one managed gateway for every sandbox
     assert.deepEqual((await readFile(calls, 'utf8')).trim().split(String.fromCharCode(10)), [
       'gateway select nemoclaw',
       'status -g nemoclaw',
-      'sandbox get ' + candidate.sandbox.name + ' -g nemoclaw',
-      'sandbox delete ' + candidate.sandbox.name + ' -g nemoclaw',
+      'sandbox get -g nemoclaw ' + candidate.sandbox.name,
+      'sandbox delete -g nemoclaw ' + candidate.sandbox.name,
     ]);
     assert.equal((await readFile(deleted, 'utf8')).trim(), candidate.sandbox.name);
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -328,7 +333,7 @@ test('cleanup deletes a claimed sandbox on the bound gateway', async () => {
     calls.push(argv);
     return { code: 0, stdout: 'deleted', stderr: '', durationMs: 1, stdoutTruncated: false, stderrTruncated: false };
   });
-  assert.deepEqual(calls, [['openshell', 'sandbox', 'delete', 'nha-compat-owned', '-g', 'nemoclaw']]);
+  assert.deepEqual(calls, [['openshell', 'sandbox', 'delete', '-g', 'nemoclaw', 'nha-compat-owned']]);
   assert.equal(result.stages.cleanup.status, 'passed');
 });
 

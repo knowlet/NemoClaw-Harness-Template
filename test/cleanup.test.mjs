@@ -104,3 +104,28 @@ test('preflight accepts explicit not-found output and rejects attached failures'
   assert.equal(confirmsSandboxPreflightAbsent('sandbox my-sandbox not found; error contacting gateway', sandbox), false);
   assert.equal(confirmsSandboxPreflightAbsent('sandbox my-sandbox not found\ngateway unavailable', sandbox), false);
 });
+
+// Captured from the pinned OpenShell v0.0.116 CLI: a direct lookup for a
+// missing sandbox answers with a structured status that never repeats the
+// sandbox name, so the name-scoped prose patterns above cannot match it.
+test('preflight accepts the pinned structured not-found response', () => {
+  const structured = (message) =>
+    "Error:   \u00d7 code: 'Some requested entity was not found', message: \"" + message + "\"";
+  assert.equal(confirmsSandboxPreflightAbsent(structured('sandbox not found'), sandbox), true);
+  assert.equal(confirmsSandboxPreflightAbsent(structured('sandbox my-sandbox not found'), sandbox), true);
+  assert.equal(confirmsSandboxPreflightAbsent("\u001b[31mError:\u001b[0m " + structured('sandbox not found').slice(6), sandbox), true);
+  assert.equal(confirmsSandboxPreflightAbsent(structured('sandbox other-sandbox not found'), sandbox), false);
+  assert.equal(confirmsSandboxPreflightAbsent(structured('gateway my-gateway not found'), sandbox), false);
+  assert.equal(confirmsSandboxPreflightAbsent(structured('provider openai not found'), sandbox), false);
+  assert.equal(confirmsSandboxPreflightAbsent(structured('sandbox not found') + '\ngateway unavailable', sandbox), false);
+
+  const verdict = classifySandboxPreflightResult({
+    code: 1,
+    stderr: structured('sandbox not found'),
+    sandbox,
+  });
+  assert.deepEqual(
+    { ok: verdict.ok, owned: verdict.owned, preexisting: verdict.preexisting, errorCode: verdict.errorCode },
+    { ok: true, owned: true, preexisting: false, errorCode: null },
+  );
+});
