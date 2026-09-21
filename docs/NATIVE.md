@@ -37,6 +37,18 @@ The SDK reads the checkout Git `HEAD` before install or verify and requires this
 
 `native install` and `native verify` fail with `UNSUPPORTED_UPSTREAM` when the checkout Git `HEAD` is not `NATIVE_CONTRACT.revision`. The CLI accepts `--allow-unsupported-upstream` only as an explicit escape hatch for a compatibility qualification run; it records the actual checkout revision in its JSON result.
 
+## Upstream compatibility qualification
+
+Use the compatibility runner to compare more than one NemoClaw checkout with the same generated package and loader probe:
+
+    npm run compatibility -- \
+      --checkout pinned=../NemoClaw-pinned \
+      --checkout main=../NemoClaw-main \
+      --build \
+      --json reports/nemoclaw-compatibility.json
+
+The report records each checkout's actual Git revision, whether it matches the pinned contract, and separate `scaffold`, `install`, `loader`, `onboard`, and `exec` stages. `--deploy` adds real onboarding and one deterministic sandbox task; it also requires a working OpenShell installation and the documented provider environment. Failure categories distinguish `contract`, `infrastructure`, and `product` problems. Candidate revisions are intentionally allowed inside this runner so compatibility can be measured; normal SDK install and verify commands remain pinned by default.
+
 The package contains `manifest.yaml`, `policy-additions.yaml`, `Dockerfile`, `start.sh`, `launcher.sh`,
 `harness.mjs`, `harness.test.mjs`, `dependency-review.md`, and `native-agent.json`.
 

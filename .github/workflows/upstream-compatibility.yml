@@ -1,0 +1,107 @@
+name: NemoClaw upstream compatibility (unofficial)
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: upstream-compatibility
+  cancel-in-progress: true
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Build the SDK used by the qualification runner
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: 1eb370f20530bd1312ac86a27782ef8501b28ade
+          path: .upstream/NemoClaw-pinned
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: main
+          path: .upstream/NemoClaw-main
+          persist-credentials: false
+      - name: Install fixed OpenShell runtime for both checkouts
+        id: openshell
+        continue-on-error: true
+        run: |
+          mkdir -p "$RUNNER_TEMP/openshell" "$HOME/.local/bin"
+          cd "$RUNNER_TEMP/openshell"
+          base=https://github.com/NVIDIA/OpenShell/releases/download/v0.0.116
+          curl -fsSLO "$base/openshell-x86_64-unknown-linux-musl.tar.gz"
+          curl -fsSLO "$base/openshell-checksums-sha256.txt"
+          grep ' openshell-x86_64-unknown-linux-musl.tar.gz$' openshell-checksums-sha256.txt | sha256sum --check --strict
+          tar -xzf openshell-x86_64-unknown-linux-musl.tar.gz
+          install -m 0755 "$(find . -type f -name openshell | head -1)" "$HOME/.local/bin/openshell"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          openshell --version
+      - name: Start deterministic provider fixture
+        id: fixture
+        continue-on-error: true
+        run: |
+          node scripts/integration/fixture-provider.mjs > "$RUNNER_TEMP/compat-provider.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/compat-provider.pid"
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:18080/v1/models >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/compat-provider.log"
+          exit 1
+        env:
+          NEMOCLAW_PROVIDER: custom
+          NEMOCLAW_MODEL: fixture-model
+          NEMOCLAW_PROVIDER_KEY: fixture-only-not-a-secret
+          NEMOCLAW_ENDPOINT_URL: http://host.openshell.internal:18080/v1
+      - name: Qualify pinned and candidate checkouts
+        id: compatibility
+        continue-on-error: true
+        run: |
+          mkdir -p reports
+          node scripts/compatibility.mjs \
+            --checkout pinned=.upstream/NemoClaw-pinned \
+            --checkout candidate=.upstream/NemoClaw-main \
+            --expected pinned=1eb370f20530bd1312ac86a27782ef8501b28ade \
+            --build \
+            --deploy \
+            --sandbox-prefix nha-compat-${GITHUB_RUN_ID} \
+            --json reports/nemoclaw-compatibility.json
+        env:
+          NEMOCLAW_PROVIDER: custom
+          NEMOCLAW_MODEL: fixture-model
+          NEMOCLAW_PROVIDER_KEY: fixture-only-not-a-secret
+          NEMOCLAW_ENDPOINT_URL: http://host.openshell.internal:18080/v1
+      - name: Cleanup compatibility sandboxes and fixture
+        if: always()
+        run: |
+          openshell sandbox delete "nha-compat-${GITHUB_RUN_ID}-pinned" || true
+          openshell sandbox delete "nha-compat-${GITHUB_RUN_ID}-candidate" || true
+          if test -f "$RUNNER_TEMP/compat-provider.pid"; then kill "$(cat "$RUNNER_TEMP/compat-provider.pid")" || true; fi
+      - name: Upload compatibility report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nemoclaw-compatibility-report
+          path: reports/nemoclaw-compatibility.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Require compatibility qualification to pass
+        if: always()
+        env:
+          OPENSHELL_RESULT: ${{ steps.openshell.outcome }}
+          FIXTURE_RESULT: ${{ steps.fixture.outcome }}
+          COMPATIBILITY_RESULT: ${{ steps.compatibility.outcome }}
+        run: test "$OPENSHELL_RESULT/$FIXTURE_RESULT/$COMPATIBILITY_RESULT" = success/success/success
