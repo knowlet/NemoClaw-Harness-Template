@@ -36,24 +36,65 @@ jobs:
           ref: main
           path: .upstream/NemoClaw-main
           persist-credentials: false
-      - name: Install fixed OpenShell runtime for both checkouts
+      - name: Install pinned OpenShell runtime
         id: openshell
         continue-on-error: true
+        env:
+          HOME: ${{ runner.temp }}/nha-compat-home
+          NEMOCLAW_NON_INTERACTIVE: '1'
         run: |
-          mkdir -p "$RUNNER_TEMP/openshell" "$HOME/.local/bin"
-          cd "$RUNNER_TEMP/openshell"
-          base=https://github.com/NVIDIA/OpenShell/releases/download/v0.0.116
-          curl -fsSLO "$base/openshell-x86_64-unknown-linux-musl.tar.gz"
-          curl -fsSLO "$base/openshell-checksums-sha256.txt"
-          grep ' openshell-x86_64-unknown-linux-musl.tar.gz$' openshell-checksums-sha256.txt | sha256sum --check --strict
-          tar -xzf openshell-x86_64-unknown-linux-musl.tar.gz
-          install -m 0755 "$(find . -type f -name openshell | head -1)" "$HOME/.local/bin/openshell"
+          mkdir -p "$HOME" "$HOME/.local/bin"
+          export PATH="$HOME/.local/bin:$PATH"
+          bash .upstream/NemoClaw-pinned/scripts/install-openshell.sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           openshell --version
+          test -x "$HOME/.local/bin/openshell-gateway"
+          test -x "$HOME/.local/bin/openshell-sandbox"
+      - name: Bootstrap and verify the managed gateway
+        id: gateway
+        continue-on-error: true
+        env:
+          HOME: ${{ runner.temp }}/nha-compat-home
+          NEMOCLAW_GATEWAY_PORT: '8080'
+          NEMOCLAW_NON_INTERACTIVE: '1'
+        run: |
+          set -o pipefail
+          mkdir -p "$HOME"
+          : > "$RUNNER_TEMP/compat-gateway-bootstrap.log"
+          export PATH="$HOME/.local/bin:$PATH"
+          cd .upstream/NemoClaw-pinned
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm --prefix nemoclaw ci --ignore-scripts --no-audit --no-fund
+          npm run build:cli
+          node --input-type=commonjs -e '
+            const onboard = require("./dist/lib/onboard.js");
+            if (typeof onboard.startDockerDriverGateway !== "function") {
+              console.error("The pinned NemoClaw checkout does not export startDockerDriverGateway, so the managed gateway cannot be started before the sandbox probe.");
+              process.exit(1);
+            }
+            Promise.resolve(onboard.startDockerDriverGateway({
+              exitOnFailure: false,
+              skipSandboxBridgeReachability: true,
+            })).then(() => process.exit(0)).catch((error) => {
+              console.error(error instanceof Error ? error.stack || error.message : String(error));
+              process.exit(1);
+            });
+          ' 2>&1 | tee "$RUNNER_TEMP/compat-gateway-bootstrap.log"
+          openshell gateway select nemoclaw 2>&1 | tee -a "$RUNNER_TEMP/compat-gateway-bootstrap.log"
+          openshell status -g nemoclaw 2>&1 | tee -a "$RUNNER_TEMP/compat-gateway-bootstrap.log"
+          openshell gateway info -g nemoclaw 2>&1 | tee -a "$RUNNER_TEMP/compat-gateway-bootstrap.log"
       - name: Start deterministic provider fixture
         id: fixture
         continue-on-error: true
+        env:
+          HOME: ${{ runner.temp }}/nha-compat-home
+          NEMOCLAW_GATEWAY_PORT: '8080'
+          NEMOCLAW_PROVIDER: custom
+          NEMOCLAW_MODEL: fixture-model
+          NEMOCLAW_PROVIDER_KEY: fixture-only-not-a-secret
+          NEMOCLAW_ENDPOINT_URL: http://host.openshell.internal:18080/v1
         run: |
+          mkdir -p "$HOME"
           node scripts/integration/fixture-provider.mjs > "$RUNNER_TEMP/compat-provider.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/compat-provider.pid"
           for attempt in $(seq 1 30); do
@@ -62,15 +103,11 @@ jobs:
           done
           cat "$RUNNER_TEMP/compat-provider.log"
           exit 1
-        env:
-          NEMOCLAW_PROVIDER: custom
-          NEMOCLAW_MODEL: fixture-model
-          NEMOCLAW_PROVIDER_KEY: fixture-only-not-a-secret
-          NEMOCLAW_ENDPOINT_URL: http://host.openshell.internal:18080/v1
       - name: Qualify pinned and candidate checkouts
         id: compatibility
         continue-on-error: true
         run: |
+          mkdir -p "$HOME"
           mkdir -p reports
           node scripts/compatibility.mjs \
             --checkout pinned=.upstream/NemoClaw-pinned \
@@ -78,17 +115,23 @@ jobs:
             --expected pinned=1eb370f20530bd1312ac86a27782ef8501b28ade \
             --build \
             --deploy \
+            --gateway nemoclaw \
             --sandbox-prefix nha-compat-${GITHUB_RUN_ID} \
             --sandbox-token ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} \
             --json reports/nemoclaw-compatibility.json
         env:
+          HOME: ${{ runner.temp }}/nha-compat-home
+          NEMOCLAW_GATEWAY_PORT: '8080'
           NEMOCLAW_PROVIDER: custom
           NEMOCLAW_MODEL: fixture-model
           NEMOCLAW_PROVIDER_KEY: fixture-only-not-a-secret
           NEMOCLAW_ENDPOINT_URL: http://host.openshell.internal:18080/v1
       - name: Cleanup compatibility sandboxes and fixture
         if: always()
+        env:
+          HOME: ${{ runner.temp }}/nha-compat-home
         run: |
+          export PATH="$HOME/.local/bin:$PATH"
           if test -f reports/nemoclaw-compatibility.json; then
             node --input-type=module -e '
               import fs from "node:fs";
@@ -96,24 +139,31 @@ jobs:
               const report = JSON.parse(fs.readFileSync("reports/nemoclaw-compatibility.json", "utf8"));
               for (const item of report.cases ?? []) {
                 if (item.sandbox?.ownership !== "owned" || item.stages?.cleanup?.status === "passed" || !item.sandbox.name) continue;
-                try { execFileSync("openshell", ["sandbox", "delete", item.sandbox.name], { stdio: "inherit" }); }
+                try { execFileSync("openshell", ["sandbox", "delete", item.sandbox.name, "-g", "nemoclaw"], { stdio: "inherit" }); }
                 catch { /* qualification reports the original cleanup result */ }
               }
             '
           fi
           if test -f "$RUNNER_TEMP/compat-provider.pid"; then kill "$(cat "$RUNNER_TEMP/compat-provider.pid")" || true; fi
+          if command -v openshell >/dev/null 2>&1; then
+            openshell gateway destroy -g nemoclaw || true
+            openshell gateway remove nemoclaw || true
+          fi
       - name: Upload compatibility report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: nemoclaw-compatibility-report
-          path: reports/nemoclaw-compatibility.json
+          path: |
+            reports/nemoclaw-compatibility.json
+            ${{ runner.temp }}/compat-gateway-bootstrap.log
           if-no-files-found: error
           retention-days: 30
       - name: Require compatibility qualification to pass
         if: always()
         env:
           OPENSHELL_RESULT: ${{ steps.openshell.outcome }}
+          GATEWAY_RESULT: ${{ steps.gateway.outcome }}
           FIXTURE_RESULT: ${{ steps.fixture.outcome }}
           COMPATIBILITY_RESULT: ${{ steps.compatibility.outcome }}
-        run: test "$OPENSHELL_RESULT/$FIXTURE_RESULT/$COMPATIBILITY_RESULT" = success/success/success
+        run: test "$OPENSHELL_RESULT/$GATEWAY_RESULT/$FIXTURE_RESULT/$COMPATIBILITY_RESULT" = success/success/success/success

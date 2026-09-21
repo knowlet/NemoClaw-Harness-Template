@@ -1,6 +1,7 @@
 // UNOFFICIAL NemoClaw upstream compatibility qualification runner.
 // Usage: node scripts/compatibility.mjs --checkout LABEL=PATH [--checkout LABEL=PATH ...] [--expected LABEL=SHA]
-//        [--name NAME] [--json REPORT] [--sandbox-prefix PREFIX] [--sandbox-token TOKEN] [--build] [--deploy]
+//        [--name NAME] [--json REPORT] [--sandbox-prefix PREFIX] [--sandbox-token TOKEN] [--gateway NAME]
+//        [--build] [--deploy]
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -36,7 +37,8 @@ function usage() {
     '',
     'Usage:',
     '  node scripts/compatibility.mjs --checkout LABEL=PATH [--checkout LABEL=PATH ...] [--expected LABEL=SHA]',
-    '    [--name NAME] [--json REPORT] [--sandbox-prefix PREFIX] [--sandbox-token TOKEN] [--build] [--deploy]',
+    '    [--name NAME] [--json REPORT] [--sandbox-prefix PREFIX] [--sandbox-token TOKEN] [--gateway NAME]',
+    '    [--build] [--deploy]',
     '',
     'A checkout with another revision is allowed only for qualification and is',
     'reported with supportedUpstream: false. --deploy also runs onboarding and',
@@ -52,7 +54,7 @@ function parse(args) {
     if (value === '--help') { flags.help = true; continue; }
     if (value === '--build') { flags.build = true; continue; }
     if (value === '--deploy') { flags.deploy = true; flags.build = true; continue; }
-    if (!['--checkout', '--expected', '--name', '--json', '--sandbox-prefix', '--sandbox-token'].includes(value)) {
+    if (!['--checkout', '--expected', '--name', '--json', '--sandbox-prefix', '--sandbox-token', '--gateway'].includes(value)) {
       throw new Error('Unknown option: ' + value);
     }
     const next = args[++i];
@@ -73,7 +75,11 @@ function parse(args) {
     } else if (value === '--name') flags.name = next;
     else if (value === '--json') flags.json = path.resolve(next);
     else if (value === '--sandbox-prefix') flags.sandboxPrefix = next;
-    else flags.sandboxToken = next;
+    else if (value === '--sandbox-token') flags.sandboxToken = next;
+    else {
+      if (!NAME.test(next)) throw new Error('Invalid gateway name: ' + next);
+      flags.gateway = next;
+    }
   }
   if (flags.help) return flags;
   if (flags.checkouts.length === 0) throw new Error('At least one --checkout LABEL=PATH is required');
@@ -282,6 +288,25 @@ function commandResult(result, category = 'infrastructure') {
 
 function skipped(reason) { return { status: 'skipped', reason }; }
 
+/**
+ * Bind every OpenShell command to one named gateway. Without this the probe and
+ * the cleanup follow whatever gateway happens to be selected, so a case can
+ * inspect one gateway and delete from another. The flag trails the command
+ * because that is how NemoClaw's own OpenShell adapter invokes it.
+ */
+function gatewayArgs(flags) {
+  return flags.gateway ? ['-g', flags.gateway] : [];
+}
+
+/**
+ * True only when the table or JSON status output reports a live connection.
+ * "Disconnected" contains "connected", so the match requires a boundary.
+ */
+function gatewayStatusIsConnected(output) {
+  const text = String(output ?? '').replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, '');
+  return /(?:^|[\s"'])Connected(?:\s|$|[("'])/i.test(text);
+}
+
 function failStage(result, stage, value) {
   result.stages[stage] = value;
   result.status = value.status === 'blocked' ? 'blocked' : 'failed';
@@ -379,8 +404,31 @@ async function qualify(item, flags, workspace, runToken) {
     return result;
   }
   const cli = path.join(item.checkout, 'bin', 'nemoclaw.js');
+  if (flags.gateway) {
+    const selected = await run(['openshell', 'gateway', 'select', flags.gateway], { cwd: item.checkout, timeoutMs: 60000 });
+    const status = selected.code === 0
+      ? await run(['openshell', 'status', ...gatewayArgs(flags)], { cwd: item.checkout, timeoutMs: 60000 })
+      : null;
+    if (!status) {
+      const outcome = commandResult(selected, 'infrastructure');
+      return failStage(result, 'gateway', { ...outcome, gateway: flags.gateway, errorCode: outcome.errorCode ?? 'GATEWAY_SELECT_FAILED' });
+    }
+    if (status.code !== 0 || !gatewayStatusIsConnected(status.stdout)) {
+      return failStage(result, 'gateway', {
+        status: 'failed',
+        category: 'infrastructure',
+        errorCode: 'GATEWAY_UNHEALTHY',
+        gateway: flags.gateway,
+        exitCode: status.code,
+        signal: status.signal,
+        stdoutTail: tail(status.stdout),
+        stderrTail: tail(status.stderr),
+      });
+    }
+    result.stages.gateway = { status: 'passed', category: 'infrastructure', gateway: flags.gateway };
+  }
   const sandbox = result.sandbox.name;
-  const preflightResult = await run(['openshell', 'sandbox', 'get', sandbox], { cwd: item.checkout, timeoutMs: 30000 });
+  const preflightResult = await run(['openshell', 'sandbox', 'get', sandbox, ...gatewayArgs(flags)], { cwd: item.checkout, timeoutMs: 30000 });
   const preflight = classifySandboxPreflightResult({ ...preflightResult, sandbox });
   result.stages.preflight = preflight.ok
     ? { status: 'passed', category: 'infrastructure', sandbox, ownership: 'owned', preexisting: false }
@@ -424,7 +472,7 @@ export async function cleanupSandbox(result, flags, runCommand = run) {
     };
     return;
   }
-  const deletion = await runCommand(['openshell', 'sandbox', 'delete', sandbox], { timeoutMs: 120000 });
+  const deletion = await runCommand(['openshell', 'sandbox', 'delete', sandbox, ...gatewayArgs(flags)], { timeoutMs: 120000 });
   const verdict = classifyDestroyResult({ ...deletion, sandbox });
   const cleanup = commandResult(deletion, 'infrastructure');
   if (verdict.ok) {

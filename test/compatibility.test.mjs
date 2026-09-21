@@ -71,6 +71,15 @@ async function fakeTooling(root) {
   await writeFile(path.join(tools, 'npm'), '#!/bin/sh\nexit 0\n');
   await writeFile(path.join(tools, 'openshell'), [
     '#!/bin/sh',
+    'if [ -n "$NHA_CALL_LOG" ]; then printf "%s\\n" "$*" >> "$NHA_CALL_LOG"; fi',
+    'if [ "$1" = "gateway" ] && [ "$2" = "select" ]; then',
+    '  if [ -n "$NHA_GATEWAY_SELECT_EXIT" ]; then exit "$NHA_GATEWAY_SELECT_EXIT"; fi',
+    '  exit 0',
+    'fi',
+    'if [ "$1" = "status" ]; then',
+    '  if [ "$NHA_GATEWAY_STATUS" = "Disconnected" ]; then echo "Status: Disconnected"; else echo "Status: Connected"; fi',
+    '  exit 0',
+    'fi',
     'if [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then',
     '  if [ "$NHA_EXISTING_SANDBOX" = "$3" ]; then echo "Sandbox $3 is running"; exit 0; fi',
     '  echo "Error: sandbox $3 not found" >&2; exit 1',
@@ -211,6 +220,116 @@ test('successful deploy runs preflight, onboard, exec, and cleanup with fake too
     assert.equal(candidate.stages.cleanup.status, 'passed');
     assert.equal((await readFile(deleted, 'utf8')).trim(), candidate.sandbox.name);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('gateway binding selects and verifies one managed gateway for every sandbox command', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nha-compat-test-'));
+  try {
+    const checkout = path.join(root, 'NemoClaw');
+    await fakeCheckout(checkout);
+    const tools = await fakeTooling(root);
+    const calls = path.join(root, 'calls.log');
+    const deleted = path.join(root, 'deleted.log');
+    const result = runCompatibility([
+      '--checkout', 'candidate=' + checkout,
+      '--deploy',
+      '--gateway', 'nemoclaw',
+      '--sandbox-prefix', 'nha-compat',
+      '--sandbox-token', 'testtoken',
+    ], { PATH: tools + ':' + process.env.PATH, NHA_CALL_LOG: calls, NHA_DELETE_LOG: deleted });
+    assert.equal(result.status, 0, result.stderr);
+    const candidate = JSON.parse(result.stdout).cases[0];
+    assert.equal(candidate.stages.gateway.status, 'passed');
+    assert.equal(candidate.stages.gateway.gateway, 'nemoclaw');
+    assert.equal(candidate.stages.cleanup.status, 'passed');
+    assert.deepEqual((await readFile(calls, 'utf8')).trim().split(String.fromCharCode(10)), [
+      'gateway select nemoclaw',
+      'status -g nemoclaw',
+      'sandbox get ' + candidate.sandbox.name + ' -g nemoclaw',
+      'sandbox delete ' + candidate.sandbox.name + ' -g nemoclaw',
+    ]);
+    assert.equal((await readFile(deleted, 'utf8')).trim(), candidate.sandbox.name);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('a disconnected gateway fails before the sandbox probe', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nha-compat-test-'));
+  try {
+    const checkout = path.join(root, 'NemoClaw');
+    await fakeCheckout(checkout);
+    const tools = await fakeTooling(root);
+    const calls = path.join(root, 'calls.log');
+    const deleted = path.join(root, 'deleted.log');
+    const result = runCompatibility([
+      '--checkout', 'candidate=' + checkout,
+      '--deploy',
+      '--gateway', 'nemoclaw',
+      '--sandbox-prefix', 'nha-compat',
+      '--sandbox-token', 'testtoken',
+    ], { PATH: tools + ':' + process.env.PATH, NHA_CALL_LOG: calls, NHA_DELETE_LOG: deleted, NHA_GATEWAY_STATUS: 'Disconnected' });
+    assert.equal(result.status, 1, result.stderr);
+    const candidate = JSON.parse(result.stdout).cases[0];
+    assert.equal(candidate.stages.gateway.status, 'failed');
+    assert.equal(candidate.stages.gateway.errorCode, 'GATEWAY_UNHEALTHY');
+    assert.equal(candidate.stages.preflight, undefined);
+    assert.equal(candidate.stages.cleanup.status, 'skipped');
+    assert.deepEqual((await readFile(calls, 'utf8')).trim().split(String.fromCharCode(10)), [
+      'gateway select nemoclaw',
+      'status -g nemoclaw',
+    ]);
+    await assert.rejects(() => readFile(deleted, 'utf8'));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('a refused gateway selection stops the case without probing or deleting', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nha-compat-test-'));
+  try {
+    const checkout = path.join(root, 'NemoClaw');
+    await fakeCheckout(checkout);
+    const tools = await fakeTooling(root);
+    const calls = path.join(root, 'calls.log');
+    const deleted = path.join(root, 'deleted.log');
+    const result = runCompatibility([
+      '--checkout', 'candidate=' + checkout,
+      '--deploy',
+      '--gateway', 'nemoclaw',
+      '--sandbox-prefix', 'nha-compat',
+      '--sandbox-token', 'testtoken',
+    ], { PATH: tools + ':' + process.env.PATH, NHA_CALL_LOG: calls, NHA_DELETE_LOG: deleted, NHA_GATEWAY_SELECT_EXIT: '1' });
+    assert.equal(result.status, 1, result.stderr);
+    const candidate = JSON.parse(result.stdout).cases[0];
+    assert.equal(candidate.stages.gateway.status, 'failed');
+    assert.equal(candidate.stages.gateway.errorCode, 'GATEWAY_SELECT_FAILED');
+    assert.equal(candidate.stages.cleanup.status, 'skipped');
+    assert.deepEqual((await readFile(calls, 'utf8')).trim().split(String.fromCharCode(10)), ['gateway select nemoclaw']);
+    await assert.rejects(() => readFile(deleted, 'utf8'));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('compatibility rejects an invalid gateway name', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nha-compat-test-'));
+  try {
+    const checkout = path.join(root, 'NemoClaw');
+    await fakeCheckout(checkout);
+    const result = runCompatibility(['--checkout', 'candidate=' + checkout, '--gateway', 'Not A Gateway']);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Invalid gateway name/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('cleanup deletes a claimed sandbox on the bound gateway', async () => {
+  const result = {
+    status: 'failed',
+    sandbox: { name: 'nha-compat-owned', ownership: 'owned' },
+    stages: { onboard: { status: 'failed' } },
+  };
+  const calls = [];
+  await cleanupSandbox(result, { deploy: true, gateway: 'nemoclaw' }, async (argv) => {
+    calls.push(argv);
+    return { code: 0, stdout: 'deleted', stderr: '', durationMs: 1, stdoutTruncated: false, stderrTruncated: false };
+  });
+  assert.deepEqual(calls, [['openshell', 'sandbox', 'delete', 'nha-compat-owned', '-g', 'nemoclaw']]);
+  assert.equal(result.stages.cleanup.status, 'passed');
 });
 
 test('compatibility sandbox names are unique, bounded, and label scoped', () => {
