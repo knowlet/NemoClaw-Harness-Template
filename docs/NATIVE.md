@@ -47,7 +47,7 @@ Use the compatibility runner to compare more than one NemoClaw checkout with the
       --build \
       --json reports/nemoclaw-compatibility.json
 
-The report records each checkout's actual Git revision, whether it matches the pinned contract, and separate `scaffold`, `install`, `loader`, `onboard`, and `exec` stages. `--deploy` adds real onboarding and one deterministic sandbox task; it also requires a working OpenShell installation and the documented provider environment. Failure categories distinguish `contract`, `infrastructure`, and `product` problems. Candidate revisions are intentionally allowed inside this runner so compatibility can be measured; normal SDK install and verify commands remain pinned by default.
+The report records each checkout's actual Git revision, whether it matches the pinned contract, and separate `scaffold`, `install`, `loader`, `preflight`, `onboard`, `exec`, and `cleanup` stages. `--deploy` adds real onboarding and one deterministic sandbox task; it also requires a working OpenShell installation and the documented provider environment. Deploy cases receive bounded per-run sandbox names, probe the name before onboarding, and clean up only after claiming ownership. Use `--sandbox-token` when a CI job needs reproducible names. Failure categories distinguish `contract`, `infrastructure`, and `product` problems. Candidate revisions are intentionally allowed inside this runner so compatibility can be measured; normal SDK install and verify commands remain pinned by default.
 
 The package contains `manifest.yaml`, `policy-additions.yaml`, `Dockerfile`, `start.sh`, `launcher.sh`,
 `harness.mjs`, `harness.test.mjs`, `dependency-review.md`, and `native-agent.json`.

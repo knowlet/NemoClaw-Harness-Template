@@ -1,5 +1,6 @@
 name: NemoClaw upstream compatibility (unofficial)
 on:
+  pull_request:
   schedule:
     - cron: '17 3 * * 1'
   workflow_dispatch:
@@ -78,6 +79,7 @@ jobs:
             --build \
             --deploy \
             --sandbox-prefix nha-compat-${GITHUB_RUN_ID} \
+            --sandbox-token ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} \
             --json reports/nemoclaw-compatibility.json
         env:
           NEMOCLAW_PROVIDER: custom
@@ -87,8 +89,18 @@ jobs:
       - name: Cleanup compatibility sandboxes and fixture
         if: always()
         run: |
-          openshell sandbox delete "nha-compat-${GITHUB_RUN_ID}-pinned" || true
-          openshell sandbox delete "nha-compat-${GITHUB_RUN_ID}-candidate" || true
+          if test -f reports/nemoclaw-compatibility.json; then
+            node --input-type=module -e '
+              import fs from "node:fs";
+              import { execFileSync } from "node:child_process";
+              const report = JSON.parse(fs.readFileSync("reports/nemoclaw-compatibility.json", "utf8"));
+              for (const item of report.cases ?? []) {
+                if (item.sandbox?.ownership !== "owned" || item.stages?.cleanup?.status === "passed" || !item.sandbox.name) continue;
+                try { execFileSync("openshell", ["sandbox", "delete", item.sandbox.name], { stdio: "inherit" }); }
+                catch { /* qualification reports the original cleanup result */ }
+              }
+            '
+          fi
           if test -f "$RUNNER_TEMP/compat-provider.pid"; then kill "$(cat "$RUNNER_TEMP/compat-provider.pid")" || true; fi
       - name: Upload compatibility report
         if: always()

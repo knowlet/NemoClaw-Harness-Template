@@ -1,10 +1,17 @@
 // UNOFFICIAL NemoClaw upstream compatibility qualification runner.
 // Usage: node scripts/compatibility.mjs --checkout LABEL=PATH [--checkout LABEL=PATH ...] [--expected LABEL=SHA]
-//        [--name NAME] [--json REPORT] [--build] [--deploy]
+//        [--name NAME] [--json REPORT] [--sandbox-prefix PREFIX] [--sandbox-token TOKEN] [--build] [--deploy]
 import { spawn } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
+import { fileURLToPath } from 'node:url';
+import {
+  classifyDestroyResult,
+  classifySandboxPreflightResult,
+} from './lib/sandbox-cleanup.mjs';
 import {
   NATIVE_CONTRACT,
   VERSION,
@@ -16,8 +23,11 @@ import {
 const MAX_CAPTURE_BYTES = 8192;
 const MAX_TAIL_BYTES = 4096;
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
+const TIMEOUT_TERM_GRACE_MS = 250;
+const TIMEOUT_SETTLE_MS = 1000;
 const LABEL = /^[a-z][a-z0-9-]{0,31}$/;
 const NAME = /^[a-z][a-z0-9-]{0,31}$/;
+const TOKEN = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const SHA = /^[0-9a-f]{40}$/;
 
 function usage() {
@@ -26,7 +36,7 @@ function usage() {
     '',
     'Usage:',
     '  node scripts/compatibility.mjs --checkout LABEL=PATH [--checkout LABEL=PATH ...] [--expected LABEL=SHA]',
-    '    [--name NAME] [--json REPORT] [--build] [--deploy]',
+    '    [--name NAME] [--json REPORT] [--sandbox-prefix PREFIX] [--sandbox-token TOKEN] [--build] [--deploy]',
     '',
     'A checkout with another revision is allowed only for qualification and is',
     'reported with supportedUpstream: false. --deploy also runs onboarding and',
@@ -42,7 +52,7 @@ function parse(args) {
     if (value === '--help') { flags.help = true; continue; }
     if (value === '--build') { flags.build = true; continue; }
     if (value === '--deploy') { flags.deploy = true; flags.build = true; continue; }
-    if (!['--checkout', '--expected', '--name', '--json', '--sandbox-prefix'].includes(value)) {
+    if (!['--checkout', '--expected', '--name', '--json', '--sandbox-prefix', '--sandbox-token'].includes(value)) {
       throw new Error('Unknown option: ' + value);
     }
     const next = args[++i];
@@ -62,12 +72,14 @@ function parse(args) {
       flags.expected.set(label, revision);
     } else if (value === '--name') flags.name = next;
     else if (value === '--json') flags.json = path.resolve(next);
-    else flags.sandboxPrefix = next;
+    else if (value === '--sandbox-prefix') flags.sandboxPrefix = next;
+    else flags.sandboxToken = next;
   }
   if (flags.help) return flags;
   if (flags.checkouts.length === 0) throw new Error('At least one --checkout LABEL=PATH is required');
   if (flags.name !== undefined && !NAME.test(flags.name)) throw new Error('Invalid agent name: ' + flags.name);
   if (flags.sandboxPrefix !== undefined && !NAME.test(flags.sandboxPrefix)) throw new Error('Invalid sandbox prefix: ' + flags.sandboxPrefix);
+  if (flags.sandboxToken !== undefined && !TOKEN.test(flags.sandboxToken)) throw new Error('Invalid sandbox token: ' + flags.sandboxToken);
   const labels = new Set();
   for (const item of flags.checkouts) {
     if (labels.has(item.label)) throw new Error('Duplicate checkout label: ' + item.label);
@@ -94,47 +106,141 @@ function sanitize(value) {
 
 function tail(value) {
   const text = sanitize(value);
-  return Buffer.byteLength(text) <= MAX_TAIL_BYTES ? text : text.slice(-MAX_TAIL_BYTES);
+  const bytes = Buffer.from(text, 'utf8');
+  return bytes.length <= MAX_TAIL_BYTES ? text : bytes.subarray(-MAX_TAIL_BYTES).toString('utf8');
 }
 
-function run(argv, { cwd, env = process.env, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+function createCapture() {
+  return { chunks: [], bytes: 0, truncated: false };
+}
+
+function collect(capture, chunk) {
+  if (chunk.length >= MAX_CAPTURE_BYTES) {
+    capture.chunks = [chunk.subarray(-MAX_CAPTURE_BYTES)];
+    capture.bytes = MAX_CAPTURE_BYTES;
+    capture.truncated = true;
+    return;
+  }
+  capture.chunks.push(chunk);
+  capture.bytes += chunk.length;
+  if (capture.bytes <= MAX_CAPTURE_BYTES) return;
+  capture.truncated = true;
+  let remove = capture.bytes - MAX_CAPTURE_BYTES;
+  while (remove > 0) {
+    const first = capture.chunks[0];
+    if (first.length <= remove) {
+      capture.chunks.shift();
+      remove -= first.length;
+    } else {
+      capture.chunks[0] = first.subarray(remove);
+      remove = 0;
+    }
+  }
+  capture.bytes = MAX_CAPTURE_BYTES;
+}
+
+function captureText(capture) {
+  return Buffer.concat(capture.chunks, capture.bytes).toString('utf8');
+}
+
+function createMarkerDetector(marker) {
+  if (!marker) return null;
+  const decoder = new StringDecoder('utf8');
+  let carry = '';
+  let seen = false;
+  return {
+    push(chunk) {
+      if (seen) return;
+      const text = carry + decoder.write(chunk);
+      if (text.includes(marker)) {
+        seen = true;
+        return;
+      }
+      carry = text.slice(-(marker.length - 1));
+    },
+    finish() {
+      if (!seen) seen = (carry + decoder.end()).includes(marker);
+      return seen;
+    },
+  };
+}
+
+function terminateProcess(child, signal) {
+  if (!child?.pid) return false;
+  if (process.platform !== 'win32') {
+    try {
+      process.kill(-child.pid, signal);
+      return true;
+    } catch { /* use direct-child fallback below */ }
+  }
+  try {
+    return child.kill(signal);
+  } catch {
+    return false;
+  }
+}
+
+export function run(argv, { cwd, env = process.env, timeoutMs = DEFAULT_TIMEOUT_MS, marker } = {}) {
   return new Promise((resolve) => {
     const started = Date.now();
     let child;
     try {
-      child = spawn(argv[0], argv.slice(1), { cwd, env, shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn(argv[0], argv.slice(1), {
+        cwd,
+        env,
+        shell: false,
+        detached: process.platform !== 'win32',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
     } catch (error) {
-      resolve({ code: null, signal: null, stdout: '', stderr: '', errorCode: error.code ?? 'SPAWN_FAILED', durationMs: Date.now() - started });
+      resolve({ code: null, signal: null, stdout: '', stderr: '', stdoutTruncated: false, stderrTruncated: false, markerSeen: false, errorCode: error.code ?? 'SPAWN_FAILED', durationMs: Date.now() - started });
       return;
     }
-    const stdout = [];
-    const stderr = [];
-    const stdoutState = { value: 0 };
-    const stderrState = { value: 0 };
+    const stdout = createCapture();
+    const stderr = createCapture();
+    const detector = createMarkerDetector(marker);
     let settled = false;
     let timedOut = false;
-    const collect = (target, chunk, current) => {
-      if (current.value >= MAX_CAPTURE_BYTES) return;
-      const remaining = MAX_CAPTURE_BYTES - current.value;
-      const part = chunk.subarray(0, remaining);
-      target.push(part);
-      current.value += part.length;
-    };
+    let timer;
+    let killTimer;
+    let settleTimer;
     const finish = (result) => {
       if (settled) return;
       settled = true;
-      resolve({ ...result, durationMs: Date.now() - started });
-    };
-    child.stdout.on('data', (chunk) => collect(stdout, chunk, stdoutState));
-    child.stderr.on('data', (chunk) => collect(stderr, chunk, stderrState));
-    const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs);
-    child.once('error', (error) => {
       clearTimeout(timer);
-      finish({ code: null, signal: null, stdout: '', stderr: '', errorCode: error.code ?? 'SPAWN_FAILED' });
+      clearTimeout(killTimer);
+      clearTimeout(settleTimer);
+      resolve({
+        ...result,
+        stdout: captureText(stdout),
+        stderr: captureText(stderr),
+        stdoutTruncated: stdout.truncated,
+        stderrTruncated: stderr.truncated,
+        markerSeen: detector?.finish() ?? false,
+        durationMs: Date.now() - started,
+      });
+    };
+    child.stdout.on('data', (chunk) => { collect(stdout, chunk); detector?.push(chunk); });
+    child.stderr.on('data', (chunk) => collect(stderr, chunk));
+    timer = setTimeout(() => {
+      timedOut = true;
+      terminateProcess(child, 'SIGTERM');
+      killTimer = setTimeout(() => {
+        terminateProcess(child, 'SIGKILL');
+        settleTimer = setTimeout(() => {
+          // Descendants can retain inherited pipes after the group is gone.
+          // Closing our ends bounds settlement independently of those pipes.
+          child.stdout.destroy();
+          child.stderr.destroy();
+          finish({ code: null, signal: 'SIGKILL', timedOut });
+        }, TIMEOUT_SETTLE_MS);
+      }, TIMEOUT_TERM_GRACE_MS);
+    }, timeoutMs);
+    child.once('error', (error) => {
+      finish({ code: null, signal: null, timedOut, errorCode: error.code ?? 'SPAWN_FAILED' });
     });
     child.once('close', (code, signal) => {
-      clearTimeout(timer);
-      finish({ code, signal, stdout: Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8'), timedOut });
+      finish({ code, signal, timedOut });
     });
   });
 }
@@ -155,12 +261,19 @@ function errorResult(error, fallback = 'product') {
 }
 
 function commandResult(result, category = 'infrastructure') {
-  if (result.errorCode) return { status: 'blocked', category, errorCode: result.errorCode, durationMs: result.durationMs };
-  if (result.timedOut) return { status: 'blocked', category, errorCode: 'TIMEOUT', durationMs: result.durationMs };
+  const output = {
+    durationMs: result.durationMs,
+    stdoutTruncated: result.stdoutTruncated === true,
+    stderrTruncated: result.stderrTruncated === true,
+  };
+  if (result.stdout) output.stdoutTail = tail(result.stdout);
+  if (result.stderr) output.stderrTail = tail(result.stderr);
+  if (result.errorCode) return { status: 'blocked', category, errorCode: result.errorCode, ...output };
+  if (result.timedOut) return { status: 'blocked', category, errorCode: 'TIMEOUT', ...output };
   if (result.code !== 0) {
-    return { status: 'failed', category, exitCode: result.code, signal: result.signal, stderrTail: tail(result.stderr), durationMs: result.durationMs };
+    return { status: 'failed', category, exitCode: result.code, signal: result.signal, ...output };
   }
-  return { status: 'passed', exitCode: 0, durationMs: result.durationMs };
+  return { status: 'passed', exitCode: 0, ...output };
 }
 
 function skipped(reason) { return { status: 'skipped', reason }; }
@@ -193,7 +306,19 @@ async function buildCheckout(result, checkout) {
   return true;
 }
 
-async function qualify(item, flags, workspace) {
+export function createSandboxName(prefix, label, token = randomUUID().replaceAll('-', '').slice(0, 12)) {
+  const suffix = String(token).replace(/[^a-z0-9]/gi, '').toLowerCase().slice(-12) || 'run';
+  const normalizedLabel = String(label).replace(/[^a-z0-9-]/gi, '').toLowerCase() || 'case';
+  const labelPart = normalizedLabel.length <= 12
+    ? normalizedLabel
+    : normalizedLabel.slice(0, 7) + '-' + createHash('sha256').update(normalizedLabel).digest('hex').slice(0, 4);
+  const normalizedPrefix = String(prefix).replace(/[^a-z0-9-]/gi, '').toLowerCase() || 'nha-compat';
+  const prefixBudget = 31 - labelPart.length - suffix.length - 2;
+  const prefixPart = prefixBudget > 0 ? normalizedPrefix.slice(0, prefixBudget) : '';
+  return [prefixPart, labelPart, suffix].filter(Boolean).join('-');
+}
+
+async function qualify(item, flags, workspace, runToken) {
   const expectedRevision = flags.expected.get(item.label) ?? (item.label === 'pinned' ? NATIVE_CONTRACT.revision : null);
   const result = {
     label: item.label,
@@ -204,6 +329,11 @@ async function qualify(item, flags, workspace) {
     status: 'blocked',
     failureClass: null,
     stages: {},
+    sandbox: flags.deploy ? {
+      name: createSandboxName(flags.sandboxPrefix ?? 'nha-compat', item.label, runToken),
+      ownership: 'unknown',
+      preflight: 'pending',
+    } : null,
   };
   const revision = await revisionFor(item.checkout);
   if (!revision.revision) return failStage(result, 'checkout', commandResult(revision.result, 'infrastructure'));
@@ -245,7 +375,16 @@ async function qualify(item, flags, workspace) {
     return result;
   }
   const cli = path.join(item.checkout, 'bin', 'nemoclaw.js');
-  const sandbox = (flags.sandboxPrefix ?? 'nha-compat') + '-' + item.label;
+  const sandbox = result.sandbox.name;
+  const preflightResult = await run(['openshell', 'sandbox', 'get', sandbox], { cwd: item.checkout, timeoutMs: 30000 });
+  const preflight = classifySandboxPreflightResult({ ...preflightResult, sandbox });
+  result.stages.preflight = preflight.ok
+    ? { status: 'passed', category: 'infrastructure', sandbox, ownership: 'owned', preexisting: false }
+    : { status: 'failed', category: 'infrastructure', sandbox, ownership: preflight.preexisting ? 'pre-existing' : 'unknown', preexisting: preflight.preexisting, errorCode: preflight.errorCode, error: sanitize(preflight.detail) };
+  result.sandbox.ownership = preflight.ok ? 'owned' : preflight.preexisting ? 'pre-existing' : 'unknown';
+  result.sandbox.preflight = preflight.ok ? 'absent' : preflight.preexisting ? 'present' : 'failed';
+  if (!preflight.ok) return failStage(result, 'preflight', result.stages.preflight);
+
   const onboard = await run([process.execPath, cli, 'onboard', '--name', sandbox, '--agent', name, '--no-gpu', '--no-sandbox-gpu', '--non-interactive', '--yes', '--yes-i-accept-third-party-software', '--fresh'], { cwd: item.checkout });
   result.stages.onboard = commandResult(onboard, 'product');
   if (result.stages.onboard.status !== 'passed') {
@@ -253,10 +392,10 @@ async function qualify(item, flags, workspace) {
     result.failureClass = result.stages.onboard.category;
     return result;
   }
-  const task = await run([process.execPath, cli, sandbox, 'exec', '--', '/usr/local/bin/' + name, 'NHA_COMPAT_OK'], { cwd: item.checkout });
+  const task = await run([process.execPath, cli, sandbox, 'exec', '--', '/usr/local/bin/' + name, 'NHA_COMPAT_OK'], { cwd: item.checkout, marker: 'Echo: NHA_COMPAT_OK' });
   result.stages.exec = commandResult(task, 'product');
-  if (result.stages.exec.status === 'passed' && !task.stdout.includes('Echo: NHA_COMPAT_OK')) {
-    result.stages.exec = { status: 'failed', category: 'product', errorCode: 'SMOKE_MISMATCH' };
+  if (result.stages.exec.status === 'passed' && !task.markerSeen) {
+    result.stages.exec = { status: 'failed', category: 'product', errorCode: 'SMOKE_MISMATCH', stdoutTail: tail(task.stdout), stderrTail: tail(task.stderr), stdoutTruncated: task.stdoutTruncated, stderrTruncated: task.stderrTruncated, durationMs: task.durationMs };
   }
   if (result.stages.exec.status !== 'passed') {
     result.status = result.stages.exec.status === 'blocked' ? 'blocked' : 'failed';
@@ -267,11 +406,29 @@ async function qualify(item, flags, workspace) {
   return result;
 }
 
-async function cleanupSandbox(result, item, flags) {
+export async function cleanupSandbox(result, flags, runCommand = run) {
   if (!flags.deploy) return;
-  const sandbox = (flags.sandboxPrefix ?? 'nha-compat') + '-' + item.label;
-  const cleanup = commandResult(await run(['openshell', 'sandbox', 'delete', sandbox], { timeoutMs: 120000 }), 'infrastructure');
-  if (cleanup.status === 'failed' && /not found|does not exist|already absent/i.test(cleanup.stderrTail ?? '')) cleanup.status = 'passed';
+  const sandbox = result.sandbox?.name;
+  if (!sandbox || result.sandbox.ownership !== 'owned') {
+    result.stages.cleanup = {
+      status: 'skipped',
+      reason: result.sandbox?.ownership === 'pre-existing'
+        ? 'sandbox was pre-existing; ownership was not claimed'
+        : 'sandbox ownership was not established',
+      sandbox: sandbox ?? null,
+      ownership: result.sandbox?.ownership ?? 'unknown',
+    };
+    return;
+  }
+  const deletion = await runCommand(['openshell', 'sandbox', 'delete', sandbox], { timeoutMs: 120000 });
+  const verdict = classifyDestroyResult({ ...deletion, sandbox });
+  const cleanup = commandResult(deletion, 'infrastructure');
+  if (verdict.ok) {
+    cleanup.status = 'passed';
+    cleanup.absent = verdict.absent;
+  }
+  cleanup.sandbox = sandbox;
+  cleanup.ownership = 'owned';
   result.stages.cleanup = cleanup;
   if (result.status === 'passed' && cleanup.status !== 'passed') {
     result.status = cleanup.status === 'blocked' ? 'blocked' : 'failed';
@@ -279,30 +436,36 @@ async function cleanupSandbox(result, item, flags) {
   }
 }
 
-const flags = parse(process.argv.slice(2));
-if (flags.help) { usage(); process.exit(0); }
-const workspace = await mkdtemp(path.join(os.tmpdir(), 'nha-compatibility-'));
-const report = {
-  unofficial: true,
-  schemaVersion: 'nemoclaw-compatibility/v1',
-  generatedAt: new Date().toISOString(),
-  sdkVersion: VERSION,
-  nativeContract: { upstream: NATIVE_CONTRACT.upstream, revision: NATIVE_CONTRACT.revision },
-  mode: { build: flags.build === true, deploy: flags.deploy === true },
-  cases: [],
-};
-try {
-  for (const item of flags.checkouts) {
-    const result = await qualify(item, flags, workspace);
-    await cleanupSandbox(result, item, flags);
-    report.cases.push(result);
+export async function main(args = process.argv.slice(2)) {
+  const flags = parse(args);
+  if (flags.help) { usage(); return; }
+  const workspace = await mkdtemp(path.join(os.tmpdir(), 'nha-compatibility-'));
+  const report = {
+    unofficial: true,
+    schemaVersion: 'nemoclaw-compatibility/v1',
+    generatedAt: new Date().toISOString(),
+    sdkVersion: VERSION,
+    nativeContract: { upstream: NATIVE_CONTRACT.upstream, revision: NATIVE_CONTRACT.revision },
+    mode: { build: flags.build === true, deploy: flags.deploy === true },
+    cases: [],
+  };
+  const runToken = flags.sandboxToken ?? randomUUID().replaceAll('-', '').slice(0, 12);
+  try {
+    for (const item of flags.checkouts) {
+      const result = await qualify(item, flags, workspace, runToken);
+      await cleanupSandbox(result, flags);
+      report.cases.push(result);
+    }
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
-} finally {
-  await rm(workspace, { recursive: true, force: true });
+  report.status = report.cases.every((item) => item.status === 'passed')
+    ? 'passed'
+    : report.cases.some((item) => item.status === 'blocked') ? 'blocked' : 'failed';
+  if (flags.json) await writeFile(flags.json, JSON.stringify(report, null, 2) + String.fromCharCode(10), { flag: 'wx' });
+  console.log(JSON.stringify(report, null, 2));
+  if (report.status !== 'passed') process.exitCode = 1;
+  return report;
 }
-report.status = report.cases.every((item) => item.status === 'passed')
-  ? 'passed'
-  : report.cases.some((item) => item.status === 'blocked') ? 'blocked' : 'failed';
-if (flags.json) await writeFile(flags.json, JSON.stringify(report, null, 2) + String.fromCharCode(10), { flag: 'wx' });
-console.log(JSON.stringify(report, null, 2));
-if (report.status !== 'passed') process.exitCode = 1;
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) await main();
