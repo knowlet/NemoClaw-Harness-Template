@@ -48,8 +48,10 @@ jobs:
           bash .upstream/NemoClaw-pinned/scripts/install-openshell.sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           openshell --version
-          test -x "$HOME/.local/bin/openshell-gateway"
-          test -x "$HOME/.local/bin/openshell-sandbox"
+          openshell_dir="$(dirname "$(command -v openshell)")"
+          test -x "$openshell_dir/openshell-gateway"
+          test -x "$openshell_dir/openshell-sandbox"
+          echo "OpenShell CLI, gateway, and sandbox installed in $openshell_dir"
       - name: Bootstrap and verify the managed gateway
         id: gateway
         continue-on-error: true
