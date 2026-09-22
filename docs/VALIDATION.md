@@ -85,6 +85,18 @@ The packed-consumer check compiles `test/types-classic.ts` with classic `node` r
 
 Local strict-hardening verification on Node 24.18.0: `npm run check` passed with 152 tests and both packed-consumer fixtures; the standalone strict declaration fixture also passed. The public entry-point declarations and their type modules are byte-identical to the pre-hardening `develop` build. The optional Python/Go interoperability smoke could not run locally because Go was unavailable; it remains a separate CI check.
 
+### Strict response boundary review
+
+The initial strict change asserted `ChatResponse` after checking only that the first choice had an object-valued message. That did not establish the required message role, the shape of later choices, or optional field types. A loopback HTTP regression matrix reproduced 17 malformed payloads that the old validator accepted. The client now uses runtime type guards for every choice and message, optional finish reasons/indexes/tool-call fields, and numeric usage records, then returns the narrowed value without a response assertion. Opaque content, tool-call entries, and extension fields are preserved.
+
+The focused regression run passes all 27 malformed-payload cases plus valid-response preservation and sanitized-error checks. This deliberately changes malformed-response handling to `INVALID_RESPONSE`; it leaves the public TypeScript declarations unchanged.
+
+### Public declaration snapshots
+
+Consumer fixtures check selected API usages, so a declaration change outside those usages could previously pass CI. The packed-consumer smoke now compares the installed tarball's public declaration entry points and their relative declaration dependencies byte-for-byte with [reviewed snapshots](../test/public-api/README.md). Missing, changed, or obsolete snapshots fail `npm run check`. The initial snapshots match `develop` at `88eba54`; future intentional API changes require explicit snapshot review and updates rather than silently refreshing the baseline during tests.
+
+Review-fix verification on Node 24.18.0: `npm run check` passed with 184 tests, the installed-tarball snapshot comparison, and both strict consumer fixtures. The standalone declaration fixture also passed. Controlled declaration mutations (including widening `max_tokens`), missing dependencies, and added/obsolete snapshots fail the new checker as expected.
+
 ## TypeScript migration: package compatibility fixes
 
 A review of `89b3bc7` raised three issues outside the green CI gates. All three were reproduced independently, including by a separate verification agent, and are fixed here.

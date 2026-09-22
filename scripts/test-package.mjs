@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import { assertDeclarationSnapshots } from './test-declarations.mjs';
 const temp = await mkdtemp(path.join(os.tmpdir(), 'nha-package-'));
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const run = (cmd, args, cwd) => execFileSync(cmd, args, { cwd, encoding: 'utf8', timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -12,6 +13,7 @@ try {
   const consumer = path.join(temp, 'consumer'); await mkdir(consumer);
   await writeFile(path.join(consumer, 'package.json'), '{"name":"clean-consumer","private":true,"type":"module"}\n');
   run(npm, ['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund', path.join(temp, packed.filename)], consumer);
+  await assertDeclarationSnapshots(path.join(consumer, 'node_modules/@knowlet/nemoclaw-harness-sdk'));
   assert.match(run(process.execPath, ['--input-type=module', '-e', "import {createAdapter} from '@knowlet/nemoclaw-harness-sdk'; console.log(createAdapter('consumer').metadata.unofficial)"], consumer), /true/);
   assert.match(run(process.execPath, ['--input-type=module', '-e', "import {SUITE_VERSION} from '@knowlet/nemoclaw-harness-sdk/testing'; console.log(SUITE_VERSION)"], consumer), /harness-suite\/v1/);
   const cli = path.join(consumer, 'node_modules/@knowlet/nemoclaw-harness-sdk/bin/nha.mjs');
@@ -43,5 +45,5 @@ try {
     }
   }
   assert.ok(packed.files.some((file) => file.path === 'NOTICE'));
-  console.log('Package smoke passed: pack -> offline install -> ESM import -> CLI demo -> scaffold -> offline npm ci -> validate/demo/harness suite -> strict declarations (node + NodeNext, skipLibCheck=false)');
+  console.log('Package smoke passed: pack -> offline install -> public declaration snapshots -> ESM import -> CLI demo -> scaffold -> offline npm ci -> validate/demo/harness suite -> strict declarations (node + NodeNext, skipLibCheck=false)');
 } finally { await rm(temp, { recursive: true, force: true }); }

@@ -1,0 +1,105 @@
+export type { AdapterManifest, RunOptions, RunResult, ChatMessage, ChatOptions, ChatResponse, InferenceOptions, OpenShellOptions, OpenShellPlan, NativeAgentInput, NativeAgentDefinition, NativeInstallResult, NativeVerificationReport, } from './types.js';
+export type { HarnessCase, HarnessSuite, CaseResult, SuiteReport, HarnessInvoke, SuiteOptions, MockInferenceReply, MockInferenceServer, } from './testing-types.js';
+import type { AdapterManifest, RunOptions, RunResult, ChatMessage, ChatOptions, ChatResponse, InferenceOptions, OpenShellOptions, OpenShellPlan, NativeAgentInput, NativeAgentDefinition, NativeInstallResult, NativeVerificationReport } from './types.js';
+import type { HarnessSuite, SuiteReport, SuiteOptions, MockInferenceReply, MockInferenceServer } from './testing-types.js';
+export declare const VERSION: '0.3.0';
+export declare const API_VERSION: 'harness-adapter.knowlet.dev/v1alpha1';
+export declare const INFERENCE_URL: 'https://inference.local/v1';
+export declare const PLACEHOLDER_TOKEN: 'openshell';
+export declare const NOTICE: string;
+export interface AdapterError extends Error {
+    readonly code: string;
+}
+export declare const AdapterError: {
+    new (code: string, message: string): AdapterError;
+};
+export declare const defineAdapter: (input: AdapterManifest) => Readonly<AdapterManifest>;
+export declare const createAdapter: (name?: string, model?: string) => Readonly<AdapterManifest>;
+export declare const loadAdapter: (filename: string) => Promise<Readonly<AdapterManifest>>;
+export declare const assertManagedFile: (filename: string) => Promise<Readonly<AdapterManifest>>;
+export declare const buildEnvironment: (adapter: AdapterManifest, parent?: Record<string, string | undefined>, home?: string) => Record<string, string>;
+export declare const runHarness: (adapter: AdapterManifest, task: string, options?: RunOptions) => Promise<RunResult>;
+export declare const createInferenceClient: (options: InferenceOptions) => Readonly<{
+    chat(messages: ChatMessage[], options?: ChatOptions): Promise<ChatResponse>;
+}>;
+export declare const digest: (value: unknown) => string;
+export declare const assertImageDigest: (image: string) => string;
+export declare const buildOpenShellCommand: (options: OpenShellOptions) => string[];
+export declare const renderPolicy: (adapter: AdapterManifest) => string;
+export declare const renderDockerfile: (adapter: AdapterManifest) => string;
+export declare const renderDeepSeekPatch: (adapter: AdapterManifest) => string;
+export declare const scaffold: (destination: string, options?: {
+    name?: string;
+    model?: string;
+}) => Promise<{
+    directory: string;
+    adapter: Readonly<AdapterManifest>;
+}>;
+export declare const buildOpenShellPlan: (options: OpenShellOptions) => OpenShellPlan;
+export declare const launchOpenShell: (options: OpenShellOptions, controls?: {
+    signal?: AbortSignal;
+}) => Promise<{
+    name: string;
+    taskSucceeded: true;
+}>;
+export declare const SUITE_VERSION: 'harness-suite/v1';
+export declare const defineSuite: (input: HarnessSuite) => Readonly<HarnessSuite>;
+export declare const runSuite: (input: HarnessSuite, options: SuiteOptions) => Promise<SuiteReport>;
+export declare const toJUnit: (report: SuiteReport) => string;
+export declare const createMockInferenceServer: (options?: {
+    model?: string;
+    replies?: Array<string | MockInferenceReply>;
+}) => Promise<MockInferenceServer>;
+export declare const NATIVE_CONTRACT: Readonly<{
+    upstream: string;
+    revision: string;
+    agentRoot: string;
+    manifest: string;
+    policy: string;
+    dockerfile: string;
+    start: string;
+    harness: string;
+    harnessTest: string;
+    launcher: string;
+    metadata: string;
+}>;
+export declare const NATIVE_PACK_VERSION: number;
+export declare const NATIVE_REQUIRED_FILES: readonly string[];
+export declare const NATIVE_REQUIRED_FILES_V1: readonly string[];
+export declare const defineNativeAgent: (input?: Partial<NativeAgentInput>) => NativeAgentDefinition;
+export declare const renderNativeManifest: (input?: Partial<NativeAgentInput>) => string;
+export declare const renderNativePolicy: (input?: Partial<NativeAgentInput>) => string;
+export declare const renderNativeDockerfile: (input?: Partial<NativeAgentInput>) => string;
+export declare const renderNativeLauncher: (input?: Partial<NativeAgentInput>) => string;
+export declare const renderNativeStart: (input?: Partial<NativeAgentInput>) => string;
+export declare const renderNativeHarness: (input?: Partial<NativeAgentInput>) => string;
+export declare const renderNativeDependencyReview: (input?: Partial<NativeAgentInput>) => string;
+export declare const renderNativeMetadata: (input?: Partial<NativeAgentInput>) => string;
+export declare const renderNativePackage: (input?: Partial<NativeAgentInput>) => Readonly<Record<string, string>>;
+export declare const nativeAgentDir: (nemoclawRoot: string, name: string) => string;
+export declare const assertNativeCheckout: (nemoclawRoot: string, options?: {
+    allowUnsupportedUpstream?: boolean;
+}) => Promise<string>;
+export declare const scaffoldNativeAgent: (destination: string, input?: Partial<NativeAgentInput>) => Promise<{
+    directory: string;
+    files: string[];
+    agent: NativeAgentDefinition;
+}>;
+export declare const readNativePackage: (directory: string) => Promise<{
+    directory: string;
+    agent: Record<string, unknown>;
+    metadata: Record<string, unknown>;
+}>;
+export declare const installNativeAgent: (directory: string, options: {
+    nemoclawRoot: string;
+    replace?: boolean;
+    allowUnsupportedUpstream?: boolean;
+}) => Promise<NativeInstallResult>;
+export declare const nativeVerifySource: () => string;
+export declare const verifyNativeAgent: (options: {
+    nemoclawRoot: string;
+    name: string;
+    timeoutMs?: number;
+    allowUnsupportedUpstream?: boolean;
+}) => Promise<NativeVerificationReport>;
+//# sourceMappingURL=index.d.ts.map
