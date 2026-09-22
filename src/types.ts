@@ -111,6 +111,8 @@ export interface NativeInstallResult {
   name: string;
   upstream: string;
   revision: string;
+  checkoutRevision: string;
+  supportedUpstream: boolean;
 }
 
 export interface NativeVerificationReport extends Record<string, unknown> {
@@ -119,6 +121,8 @@ export interface NativeVerificationReport extends Record<string, unknown> {
   name: string;
   loaderAccepted: boolean;
   deploymentVerified: false;
+  checkoutRevision?: string;
+  supportedUpstream?: boolean;
   listed?: boolean;
   dockerfile?: string;
   policyAdditions?: string;

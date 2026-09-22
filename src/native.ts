@@ -377,15 +377,76 @@ async function exists(target) {
   catch (error) { if (error.code === 'ENOENT') return false; throw error; }
 }
 
-export async function assertNativeCheckout(nemoclawRoot) {
-  const root = path.resolve(nemoclawRoot);
+interface NativeCheckoutOptions {
+  allowUnsupportedUpstream?: boolean;
+}
+
+interface NativeCheckoutInfo {
+  root: string;
+  revision: string;
+  supportedUpstream: boolean;
+}
+
+async function gitHeadRevision(root: string): Promise<string | null> {
+  const child = spawn('git', ['-C', root, 'rev-parse', '--verify', 'HEAD'], {
+    shell: false,
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  const output: Buffer[] = [];
+  child.stdout.on('data', (chunk) => output.push(chunk));
+  return new Promise((resolve) => {
+    child.once('error', () => resolve(null));
+    child.once('close', (code) => {
+      if (code !== 0) return resolve(null);
+      const revision = Buffer.concat(output).toString('utf8').trim();
+      resolve(/^[0-9a-f]{40}$/.test(revision) ? revision : null);
+    });
+  });
+}
+
+async function gitTopLevel(root: string): Promise<string | null> {
+  const child = spawn('git', ['-C', root, 'rev-parse', '--show-toplevel'], {
+    shell: false,
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  const output: Buffer[] = [];
+  child.stdout.on('data', (chunk) => output.push(chunk));
+  return new Promise((resolve) => {
+    child.once('error', () => resolve(null));
+    child.once('close', async (code) => {
+      if (code !== 0) return resolve(null);
+      const reportedRoot = Buffer.concat(output).toString('utf8').trim();
+      if (reportedRoot.length === 0) return resolve(null);
+      try { resolve(await realpath(reportedRoot)); }
+      catch { resolve(null); }
+    });
+  });
+}
+
+async function readNativeCheckout(nemoclawRoot: string | undefined, { allowUnsupportedUpstream = false }: NativeCheckoutOptions = {}): Promise<NativeCheckoutInfo> {
+  if (!nemoclawRoot) fail('USAGE', 'A NemoClaw source checkout is required');
+  let root;
+  try { root = await realpath(nemoclawRoot); }
+  catch { fail('NOT_A_CHECKOUT', 'NemoClaw source checkout not found at the supplied path'); }
   let manifest;
   try { manifest = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')); }
   catch { fail('NOT_A_CHECKOUT', 'NemoClaw source checkout not found at the supplied path'); }
   if (manifest.name !== 'nemoclaw' || !(await exists(path.join(root, NATIVE_CONTRACT.agentRoot)))) {
     fail('NOT_A_CHECKOUT', 'The supplied path is not a NemoClaw source checkout');
   }
-  return root;
+  const gitRoot = await gitTopLevel(root);
+  if (!gitRoot || gitRoot !== root) fail('NOT_A_CHECKOUT', 'The supplied NemoClaw path is not the root of a Git checkout');
+  const revision = await gitHeadRevision(root);
+  if (!revision) fail('NOT_A_CHECKOUT', 'The supplied NemoClaw path is not a Git checkout with a readable HEAD revision');
+  const supportedUpstream = revision === NATIVE_CONTRACT.revision;
+  if (!supportedUpstream && !allowUnsupportedUpstream) {
+    fail('UNSUPPORTED_UPSTREAM', 'Unsupported NemoClaw revision ' + revision + '; expected ' + NATIVE_CONTRACT.revision + '. Pass --allow-unsupported-upstream only for compatibility qualification');
+  }
+  return { root, revision, supportedUpstream };
+}
+
+export async function assertNativeCheckout(nemoclawRoot: string, options: NativeCheckoutOptions = {}): Promise<string> {
+  return (await readNativeCheckout(nemoclawRoot, options)).root;
 }
 
 /**
@@ -528,10 +589,11 @@ export async function readNativePackage(directory) {
  * lands in a staging directory under agents/, and only a fully staged package
  * is swapped in, with the previous directory restored if the swap fails.
  */
-export async function installNativeAgent(directory: string, { nemoclawRoot, replace = false }: { nemoclawRoot?: string; replace?: boolean } = {}): Promise<NativeInstallResult> {
+export async function installNativeAgent(directory: string, { nemoclawRoot, replace = false, allowUnsupportedUpstream = false }: { nemoclawRoot?: string; replace?: boolean; allowUnsupportedUpstream?: boolean } = {}): Promise<NativeInstallResult> {
   if (!nemoclawRoot) fail('USAGE', 'A NemoClaw source checkout is required');
   const pack = await readNativePackage(directory);
-  const root = await assertNativeCheckout(nemoclawRoot);
+  const checkout = await readNativeCheckout(nemoclawRoot, { allowUnsupportedUpstream });
+  const root = checkout.root;
   const target = nativeAgentDir(root, pack.agent.name);
   const source = await realpath(pack.directory);
   const previous = await canonicalOrNull(target);
@@ -569,7 +631,14 @@ export async function installNativeAgent(directory: string, { nemoclawRoot, repl
       }
       throw error;
     }
-    return { agentDir: target, name: pack.agent.name, upstream: NATIVE_CONTRACT.upstream, revision: NATIVE_CONTRACT.revision };
+    return {
+      agentDir: target,
+      name: pack.agent.name,
+      upstream: NATIVE_CONTRACT.upstream,
+      revision: NATIVE_CONTRACT.revision,
+      checkoutRevision: checkout.revision,
+      supportedUpstream: checkout.supportedUpstream,
+    };
   } finally {
     if (!preserveStaging) await rm(stagingRoot, { recursive: true, force: true });
   }
@@ -618,9 +687,10 @@ export function nativeVerifySource() {
  * loader accepts the package and selects our Dockerfile. It does not prove a
  * deployment: onboarding and sandbox execution are reported separately.
  */
-export async function verifyNativeAgent({ nemoclawRoot, name, timeoutMs = 120000 }: { nemoclawRoot?: string; name?: string; timeoutMs?: number } = {}): Promise<NativeVerificationReport> {
+export async function verifyNativeAgent({ nemoclawRoot, name, timeoutMs = 120000, allowUnsupportedUpstream = false }: { nemoclawRoot?: string; name?: string; timeoutMs?: number; allowUnsupportedUpstream?: boolean } = {}): Promise<NativeVerificationReport> {
   if (typeof name !== 'string' || !AGENT_NAME.test(name)) fail('USAGE', 'A valid agent name is required');
-  const root = await assertNativeCheckout(nemoclawRoot);
+  const checkout = await readNativeCheckout(nemoclawRoot, { allowUnsupportedUpstream });
+  const root = checkout.root;
   if (!(await exists(path.join(root, 'dist/lib/agent/defs.js')))) {
     fail('NOT_BUILT', 'The NemoClaw checkout has no compiled CLI; run its build:cli step first');
   }
@@ -661,7 +731,11 @@ export async function verifyNativeAgent({ nemoclawRoot, name, timeoutMs = 120000
       const detail = stderrTail.trim().split(String.fromCharCode(10)).slice(-3).join(' ');
       fail('VERIFY_FAILED', 'The NemoClaw loader probe produced no usable report (exit ' + String(code) + ')' + (detail ? ': ' + detail : ''));
     }
-    return report as NativeVerificationReport;
+    return {
+      ...report,
+      checkoutRevision: checkout.revision,
+      supportedUpstream: checkout.supportedUpstream,
+    } as NativeVerificationReport;
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }

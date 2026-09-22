@@ -19,7 +19,7 @@ packaging therefore records the revision it targets:
 
     NVIDIA/NemoClaw@1eb370f20530bd1312ac86a27782ef8501b28ade
 
-Other revisions may rename, add, or reject fields. Re-verify after any upstream change.
+The SDK reads the checkout Git `HEAD` before install or verify and requires this exact revision. Other revisions may rename, add, or reject fields; use the explicit compatibility qualification path before changing the pin.
 
 ## Commands
 
@@ -34,6 +34,24 @@ Other revisions may rename, add, or reject fields. Re-verify after any upstream 
 
     # 4. Onboard with the real NemoClaw CLI.
     node ../NemoClaw/bin/nemoclaw.js onboard --agent my-harness --name my-sandbox
+
+`native install` and `native verify` fail with `UNSUPPORTED_UPSTREAM` when the checkout Git `HEAD` is not `NATIVE_CONTRACT.revision`. The CLI accepts `--allow-unsupported-upstream` only as an explicit escape hatch for a compatibility qualification run; it records the actual checkout revision in its JSON result.
+
+## Upstream compatibility qualification
+
+Use the compatibility runner to compare more than one NemoClaw checkout with the same generated package and loader probe:
+
+    npm run compatibility -- \
+      --checkout pinned=../NemoClaw-pinned \
+      --checkout main=../NemoClaw-main \
+      --build \
+      --json reports/nemoclaw-compatibility.json
+
+The report records each checkout's actual Git revision, whether it matches the pinned contract, and separate `scaffold`, `install`, `loader`, `gateway`, `preflight`, `onboard`, `sandbox`, `exec`, and `cleanup` stages. `--deploy` adds real onboarding and one deterministic sandbox task; it also requires a working OpenShell installation and the documented provider environment. Deploy cases receive per-run sandbox names that satisfy NemoClaw's routed-name contract, which caps a name at 19 characters and rejects consecutive hyphens, so the run token keeps the name unique when the prefix does not fit. Each case probes its name before onboarding, requires the sandbox to exist on the bound gateway afterwards, and cleans up only after claiming ownership. Use `--sandbox-token` when a CI job needs reproducible names. Failure categories distinguish `contract`, `infrastructure`, and `product` problems. Candidate revisions are intentionally allowed inside this runner so compatibility can be measured; normal SDK install and verify commands remain pinned by default.
+
+The runner never starts a gateway, so a deploy run needs one already running, and it resolves exactly one gateway binding before it touches anything. NemoClaw derives its gateway from `NEMOCLAW_GATEWAY_PORT`: the default port `8080` maps to the bare `nemoclaw` gateway and any other port to `nemoclaw-<port>`. A deploy run therefore requires `NEMOCLAW_GATEWAY_PORT`, and `--gateway NAME` must agree with it; a mismatch, an invalid port, or a missing port stops the case before the build with `GATEWAY_BINDING_MISMATCH`, `GATEWAY_PORT_INVALID`, or `GATEWAY_PORT_UNSET`. The resolved name is passed to `sandbox get` and `sandbox delete`, onboarding receives the same port explicitly, and every case records `gateway: { name, port, workspace }` next to its sandbox, so the probe, the onboarding, and the cleanup cannot act on different gateways. Start the managed gateway through the pinned NemoClaw checkout before qualifying; the [compatibility workflow](../.github/workflows/upstream-compatibility.yml) shows that bootstrap.
+
+Deploy runs also keep their evidence on disk while they work. When `--json REPORT` is set, the report is written atomically before onboarding starts and again after every stage, so a runner that is killed still leaves the owned sandbox, its gateway, and its port for the workflow's fallback cleanup. A `SIGINT` or `SIGTERM` stops the run, ends the process group of the command that was running, deletes the sandboxes this run owns within a bounded budget, and records `status: "interrupted"` with the signal that arrived.
 
 The package contains `manifest.yaml`, `policy-additions.yaml`, `Dockerfile`, `start.sh`, `launcher.sh`,
 `harness.mjs`, `harness.test.mjs`, `dependency-review.md`, and `native-agent.json`.
@@ -100,7 +118,7 @@ records the outcome in `reports/` instead of inferring it.
 
 ## Limitations
 
-- One pinned upstream revision. This is a source-checkout integration, not a stable extension API.
+- One pinned upstream revision. The checkout must be a Git repository at that exact commit. This is a source-checkout integration, not a stable extension API.
 - The generator emits a deterministic echo starter, not an LLM. Replace `harness.mjs` (and
   `runtime.headless_command`) with your runtime, then re-verify.
 - `native install` refuses to overwrite an existing agent unless you pass `--replace`, and it replaces only directories this SDK installed.

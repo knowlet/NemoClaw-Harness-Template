@@ -95,6 +95,25 @@ Two validation gaps the same review thread raised in `src/native.ts` were also s
 
 Local verification: `npm run check` passes with 118 tests, and the packed-consumer smoke compiles the strict classic-resolution consumer.
 
+## Upstream compatibility qualification
+
+The compatibility guard was reviewed twice. The live workflow then exposed three defects that local tests could not reach, because each one only appears on a clean runner with a real gateway.
+
+| Symptom | Root cause | Fix | Evidence |
+| --- | --- | --- | --- |
+| Every case stopped at SANDBOX_PREFLIGHT_FAILED | The job installed only the standalone `openshell` CLI and then probed a sandbox before any gateway had been registered or started, so NemoClaw onboarding, the step that starts the managed gateway, never ran | The job installs the runtime through the pinned `scripts/install-openshell.sh` and starts the Docker-driver gateway with the pinned `startDockerDriverGateway()` before the probe, then requires the selected gateway to report a live connection | Run [35589773058](https://github.com/knowlet/NemoClaw-Harness-Template/actions/runs/35589773058) reached onboarding for the first time; the final run passed |
+| The probe still failed once the gateway existed | The absence classifier required the sandbox name in the output, but the pinned CLI answers a missing sandbox with a structured status that never repeats the name | The classifier accepts that structured miss for the one sandbox the command named, strips ANSI colour codes, and keeps failing closed on gateway or provider wording | Unit tests use the captured response; the deploy cases claim ownership before onboarding |
+| Onboarding refused the generated name: sandbox name too long (max 19 chars) | The runner budgeted 31 characters and joined a prefix that already ended with a hyphen | Names are built from the case label and the trailing characters of the run token, satisfying NemoClaw's 1-19 character routed-name contract | Run [35590309978](https://github.com/knowlet/NemoClaw-Harness-Template/actions/runs/35590309978) onboards both cases |
+
+Live qualification, run [35590309978](https://github.com/knowlet/NemoClaw-Harness-Template/actions/runs/35590309978) on commit 058053f: the pinned checkout `1eb370f` (`supportedUpstream: true`) and the candidate `main` `f2c0316` (`supportedUpstream: false`) both completed checkout, build, scaffold, install, loader, gateway binding, ownership preflight, onboarding, in-sandbox execution returning `Echo: NHA_COMPAT_OK`, and cleanup. The job gate requires every stage, including the gateway bootstrap, to pass; a committed workflow is still not evidence until a run reports success.
+
+The next review round found two more defects in the same runner, both fixed in `f529cb6` and verified by run [35609423419](https://github.com/knowlet/NemoClaw-Harness-Template/actions/runs/35609423419):
+
+| Symptom | Root cause | Fix | Evidence |
+| --- | --- | --- | --- |
+| A `--gateway` that disagreed with `NEMOCLAW_GATEWAY_PORT` was accepted | NemoClaw derives its gateway from the port, so the ownership probe and the cleanup addressed one gateway while onboarding created the sandbox on another; the cleanup then reported an already-absent sandbox while the real one survived | The runner resolves one binding before any gateway command or build, refuses a missing port, an invalid port, or a `--gateway` that disagrees with it, passes the resolved port to onboarding, records gateway, port, and workspace beside the sandbox, and requires the sandbox to exist on the bound gateway after onboarding | Run [35609423419](https://github.com/knowlet/NemoClaw-Harness-Template/actions/runs/35609423419) reports `gateway: { name: "nemoclaw", port: 8080 }` and a passing `sandbox` stage for both cases |
+| Ownership reached disk only after the whole run | The report the workflow fallback reads was written at the end, so an interrupted runner left no receipt, and its detached onboarding child kept running | With `--json` the report is written atomically before onboarding starts and again after every stage; `SIGINT` and `SIGTERM` end the running command process group, delete the sandboxes this run owns within a bounded budget, keep `status: "interrupted"`, and exit 130 or 143 | The interrupt regression test stops the runner mid-onboarding and asserts the receipt, the cleanup, and that the child is gone |
+
 ## Limits
 
 No real-model quality benchmark, DeepSeek runtime boot, dual-architecture qualification, GPU inference, or lifecycle/snapshot/restore test is claimed. Native packaging registers one agent for one pinned NemoClaw revision; other NemoClaw-managed operations (snapshots, recovery, lifecycle verbs) remain unimplemented. Filesystem and egress security are established only for explicit assertions that actually passed, not by an SDK status flag.

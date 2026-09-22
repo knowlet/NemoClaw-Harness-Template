@@ -45,9 +45,13 @@ try {
   const installed = await installNativeAgent(pack, { nemoclawRoot: checkout, replace: true });
   report.checks.push('install');
   report.agentDir = installed.agentDir;
+  report.checkoutRevision = installed.checkoutRevision;
+  report.supportedUpstream = installed.supportedUpstream;
 
   const verification = await verifyNativeAgent({ nemoclawRoot: checkout, name });
   report.loaderAccepted = verification.loaderAccepted === true;
+  report.checkoutRevision = verification.checkoutRevision;
+  report.supportedUpstream = verification.supportedUpstream;
   report.workload = verification.workload;
   if (report.loaderAccepted) report.checks.push('loader-accepted');
   if (!report.loaderAccepted) throw new Error('The NemoClaw loader rejected agent ' + name + ': ' + (verification.error ?? 'no detail'));

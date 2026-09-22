@@ -4,7 +4,7 @@ import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { AdapterError, NOTICE, NATIVE_CONTRACT, scaffoldNativeAgent, installNativeAgent, verifyNativeAgent } from '../src/index.js';
 
-const BOOLEAN_FLAGS = new Set(['replace', 'help']);
+const BOOLEAN_FLAGS = new Set(['replace', 'allow-unsupported-upstream', 'help']);
 const VALUE_FLAGS = new Set(['name', 'nemoclaw', 'display-name', 'description', 'harness', 'model', 'json']);
 
 function parse(args: string[]) {
@@ -28,8 +28,8 @@ function help() {
 
 Usage: nha native <action>
   init <directory> [--name NAME] [--display-name TEXT] [--description TEXT] [--model MODEL] [--harness echo|external]
-  install <directory> --nemoclaw <checkout> [--replace]
-  verify --nemoclaw <checkout> --name NAME [--json FILE]
+  install <directory> --nemoclaw <checkout> [--replace] [--allow-unsupported-upstream]
+  verify --nemoclaw <checkout> --name NAME [--json FILE] [--allow-unsupported-upstream]
 
 Native packaging writes agents/<name>/ for ${NATIVE_CONTRACT.upstream}@${NATIVE_CONTRACT.revision}.
 That layout is internal to the pinned upstream revision, not a public NVIDIA extension API.
@@ -57,13 +57,21 @@ export async function nativeCommand(args: string[]) {
   if (action === 'install') {
     if (!directory) throw new AdapterError('USAGE', 'native install requires a package directory');
     if (!flags.nemoclaw) throw new AdapterError('USAGE', 'native install requires --nemoclaw <checkout>');
-    const result = await installNativeAgent(directory, { nemoclawRoot: flags.nemoclaw, replace: flags.replace === true });
+    const result = await installNativeAgent(directory, {
+      nemoclawRoot: flags.nemoclaw,
+      replace: flags.replace === true,
+      allowUnsupportedUpstream: flags['allow-unsupported-upstream'] === true,
+    });
     console.log(JSON.stringify({ notice: NOTICE, installed: true, ...result }, null, 2));
     return;
   }
   if (action === 'verify') {
     if (!flags.nemoclaw || !flags.name) throw new AdapterError('USAGE', 'native verify requires --nemoclaw <checkout> and --name NAME');
-    const report = await verifyNativeAgent({ nemoclawRoot: flags.nemoclaw, name: flags.name });
+    const report = await verifyNativeAgent({
+      nemoclawRoot: flags.nemoclaw,
+      name: flags.name,
+      allowUnsupportedUpstream: flags['allow-unsupported-upstream'] === true,
+    });
     if (flags.json) await writeFile(flags.json, JSON.stringify(report, null, 2) + '\n', { flag: 'wx' });
     console.log(JSON.stringify(report, null, 2));
     if (!report.loaderAccepted) process.exitCode = 1;

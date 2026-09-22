@@ -42,6 +42,7 @@
     "test:package": "npm run build && node scripts/test-package.mjs",
     "check": "npm run lint && npm run typecheck && npm test && npm run test:package",
     "pack:sdk": "npm run build && node scripts/pack-sdk.mjs",
+    "compatibility": "npm run build && node scripts/compatibility.mjs",
     "test:harness": "node --test test/testkit.test.mjs",
     "test:frameworks": "node scripts/test-frameworks.mjs",
     "build": "tsc -p tsconfig.json",
