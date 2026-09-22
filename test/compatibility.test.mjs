@@ -551,6 +551,26 @@ test('a sandbox that onboarding did not create on the bound gateway fails the ca
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('a non-default workspace is recorded in the gateway receipt', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nha-compat-test-'));
+  try {
+    const checkout = path.join(root, 'NemoClaw');
+    await fakeCheckout(checkout);
+    const tools = await fakeTooling(root);
+    const created = path.join(root, 'created.log');
+    const deleted = path.join(root, 'deleted.log');
+    const result = runCompatibility([
+      '--checkout', 'candidate=' + checkout,
+      '--deploy',
+      '--sandbox-prefix', 'nha-compat',
+      '--sandbox-token', 'testtoken',
+    ], { PATH: tools + ':' + process.env.PATH, NEMOCLAW_GATEWAY_PORT: '8080', OPENSHELL_WORKSPACE: 'ci-eu', NHA_CREATED_MARKER: created, NHA_DELETE_LOG: deleted });
+    assert.equal(result.status, 0, result.stderr);
+    const candidate = JSON.parse(result.stdout).cases[0];
+    assert.deepEqual(candidate.gateway, { name: 'nemoclaw', port: 8080, workspace: 'ci-eu' });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 // NemoClaw caps a routed sandbox name at 19 characters, requires a leading
 // lowercase letter and a trailing letter or number, and rejects consecutive
 // hyphens. Onboarding refuses a name that breaks any of those rules.

@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: upstream-compatibility
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
   qualify:
@@ -142,14 +142,14 @@ jobs:
               for (const item of report.cases ?? []) {
                 if (item.sandbox?.ownership !== "owned" || !item.sandbox.name || !item.gateway?.name) continue;
                 if (item.stages?.cleanup?.status === "passed") continue;
-                try { execFileSync("openshell", ["sandbox", "delete", "-g", item.gateway.name, item.sandbox.name], { stdio: "inherit" }); }
+                try { execFileSync("openshell", ["sandbox", "delete", "-g", item.gateway.name, item.sandbox.name], { stdio: "inherit", timeout: 60000 }); }
                 catch { /* qualification reports the original cleanup result */ }
               }
             '
           fi
           if test -f "$RUNNER_TEMP/compat-provider.pid"; then kill "$(cat "$RUNNER_TEMP/compat-provider.pid")" || true; fi
           if command -v openshell >/dev/null 2>&1; then
-            openshell gateway remove nemoclaw || true
+            timeout 60s openshell gateway remove nemoclaw || true
           fi
       - name: Upload compatibility report
         if: always()

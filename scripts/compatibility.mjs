@@ -371,7 +371,7 @@ export function resolveGatewayBinding(flags = {}, env = process.env) {
 }
 
 function gatewayWorkspace(env = process.env) {
-  return String(env.OPENSSHELL_WORKSPACE ?? '').trim() || 'default';
+  return String(env.OPENSHELL_WORKSPACE ?? '').trim() || 'default';
 }
 
 /** The environment onboarding and the sandbox task run with, bound to one port. */
