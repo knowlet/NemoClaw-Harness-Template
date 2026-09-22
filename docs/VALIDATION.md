@@ -79,7 +79,11 @@ A review of `45b0a68` asked for a tested customization loop, cleanup that cannot
 | `--destroy` used `allowFailure` and never checked the exit code, and ran only on the success path | The destroy result is checked, an already-absent sandbox is treated as clean, a real failure fails the run, and cleanup now runs in `finally` so a failed deploy cannot leave a retained sandbox | A run with a deliberate failure in the customization step still deleted the sandbox before reporting the error |
 | The generated package shipped no test | It now ships `harness.test.mjs`, listed in `NATIVE_REQUIRED_FILES`, and the runner executes it before installing | `npm test` includes a regression that runs the generated test; the suite is 108 tests |
 
-The SDK and CLI sources on this branch are TypeScript: `npm run check` typechecks the implementation, builds `dist/`, and the package consumer imports the compiled layout. TypeScript and Node types are development-only, so the runtime stays dependency-free. `strict` is deliberately still off so language migration and type hardening stay separate changes.
+The SDK and CLI sources are TypeScript: `npm run check` typechecks the implementation with `strict: true`, builds `dist/`, and the package consumer imports the compiled layout. TypeScript and Node types are development-only, so the runtime stays dependency-free. Strict type hardening follows the original language migration as a separate change.
+
+The packed-consumer check compiles `test/types-classic.ts` with classic `node` resolution and `test/types.mts` with `NodeNext`, using `strict: true`, `skipLibCheck: false`, and no ambient Node types. The fixtures cover SDK/native APIs, suite invocation and inference types, with expected errors for invalid inputs. `NodeNext` also checks the `/testing` subpath. Resolution assertions require the installed tarball's emitted declarations rather than implementation sources.
+
+Local strict-hardening verification on Node 24.18.0: `npm run check` passed with 152 tests and both packed-consumer fixtures; the standalone strict declaration fixture also passed. The public entry-point declarations and their type modules are byte-identical to the pre-hardening `develop` build. The optional Python/Go interoperability smoke could not run locally because Go was unavailable; it remains a separate CI check.
 
 ## TypeScript migration: package compatibility fixes
 

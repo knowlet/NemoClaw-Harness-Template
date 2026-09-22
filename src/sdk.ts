@@ -6,7 +6,7 @@ import { constants } from 'node:fs';
 import { lstat, open, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type {
-  AdapterManifest, RunOptions, RunResult, InferenceOptions, ChatMessage, ChatOptions,
+  AdapterManifest, RunOptions, RunResult, InferenceOptions, ChatMessage, ChatOptions, ChatResponse, OpenShellOptions,
 } from './types.js';
 
 export const VERSION = '0.3.0' as const;
@@ -23,22 +23,22 @@ export class AdapterError extends Error {
     this.code = code;
   }
 }
-const fail = (message: string): never => { throw new AdapterError('INVALID_MANIFEST', message); };
-const record = (value: unknown): value is Record<string, any> => value !== null && typeof value === 'object' && !Array.isArray(value);
-const text = (value, max = 4096) => typeof value === 'string' && value.length > 0 && value.length <= max && !value.includes('\0');
-function keys(value, allowed, label) {
+function fail(message: string): never { throw new AdapterError('INVALID_MANIFEST', message); }
+const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
+const text = (value: unknown, max = 4096): value is string => typeof value === 'string' && value.length > 0 && value.length <= max && !value.includes('\0');
+function keys(value: unknown, allowed: readonly string[], label: string) {
   if (!record(value) || Object.keys(value).some((key) => !allowed.includes(key))) fail(`Invalid or unknown fields in ${label}`);
 }
-function integer(value, min, max, label) {
+function integer(value: number, min: number, max: number, label: string) {
   if (!Number.isSafeInteger(value) || value < min || value > max) fail(`Invalid ${label}`);
 }
-function statePath(value) {
+function statePath(value: unknown): value is string {
   return text(value) && value.startsWith('/sandbox/') && /^[A-Za-z0-9_./-]+$/.test(value) && path.posix.normalize(value) === value && !value.endsWith('/');
 }
-function relativePath(value) {
+function relativePath(value: unknown): value is string {
   return text(value) && !path.posix.isAbsolute(value) && !value.includes('\\') && value !== '.' && !value.split('/').includes('..') && path.posix.normalize(value) === value;
 }
-function freeze(value) {
+function freeze<T>(value: T): T {
   if (value && typeof value === 'object') {
     Object.values(value).forEach(freeze);
     Object.freeze(value);
@@ -68,8 +68,8 @@ export function defineAdapter(input: AdapterManifest): Readonly<AdapterManifest>
   if (!statePath(input.state.home) || !statePath(input.state.workspace)) fail('State and workspace must be normalized paths under /sandbox');
   const { home, workspace } = input.state;
   if (home === workspace || home.startsWith(`${workspace}/`) || workspace.startsWith(`${home}/`)) fail('Home and workspace must not overlap');
-  const all = [];
-  for (const group of ['persist', 'reconstruct', 'prohibit']) {
+  const all: string[] = [];
+  for (const group of ['persist', 'reconstruct', 'prohibit'] as const) {
     const paths = input.state[group];
     if (!Array.isArray(paths) || paths.length > 64 || !paths.every(relativePath)) fail(`Invalid state.${group}`);
     all.push(...paths);
@@ -80,7 +80,7 @@ export function defineAdapter(input: AdapterManifest): Readonly<AdapterManifest>
     if (!CONFIG_ENV.test(key) || SECRET_NAME.test(key) || !text(value)) fail('Environment field is not permitted');
   }
   if (input.env?.DSH_HOME && input.env.DSH_HOME !== home) fail('DSH_HOME must match state.home');
-  return freeze(JSON.parse(JSON.stringify(input)));
+  return freeze(JSON.parse(JSON.stringify(input)) as AdapterManifest);
 }
 
 export function createAdapter(name = 'my-harness', model = 'managed-model') {
@@ -94,7 +94,7 @@ export function createAdapter(name = 'my-harness', model = 'managed-model') {
   });
 }
 
-export async function loadAdapter(filename) {
+export async function loadAdapter(filename: string): Promise<Readonly<AdapterManifest>> {
   const data = await readFile(filename);
   if (data.length > 65536) fail('Manifest exceeds 64 KiB');
   try { return defineAdapter(JSON.parse(data.toString('utf8'))); }
@@ -102,7 +102,7 @@ export async function loadAdapter(filename) {
 }
 
 /** Check immutable configuration, not sandbox attestation. POSIX only. */
-export async function assertManagedFile(filename) {
+export async function assertManagedFile(filename: string): Promise<Readonly<AdapterManifest>> {
   if (process.platform === 'win32') throw new AdapterError('UNSUPPORTED_PLATFORM', 'Managed launch requires Linux/POSIX');
   const absolute = path.resolve(filename);
   let current = path.parse(absolute).root;
@@ -122,7 +122,7 @@ export async function assertManagedFile(filename) {
 /** Only sandbox transport/trust variables survive; never forward ambient provider keys or loader hooks. */
 export function buildEnvironment(adapter: AdapterManifest, parent: Record<string, string | undefined> = process.env, home = adapter.state.home): Record<string, string> {
   adapter = defineAdapter(adapter);
-  const env = { PATH: '/usr/local/bin:/usr/bin:/bin', LANG: 'C.UTF-8' };
+  const env: Record<string, string> = { PATH: '/usr/local/bin:/usr/bin:/bin', LANG: 'C.UTF-8' };
   for (const key of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS']) {
     if (typeof parent[key] === 'string') env[key] = parent[key];
   }
@@ -148,7 +148,7 @@ export async function runHarness(input: AdapterManifest, task: string, options: 
       env: buildEnvironment(adapter, options.parentEnv ?? process.env, options.home ?? adapter.state.home),
       stdio: ['pipe', 'pipe', 'pipe'], shell: false, detached: process.platform !== 'win32',
     });
-    let failure;
+    let failure: AdapterError | undefined;
     let size = 0;
     let settled = false;
     const stdout: Buffer[] = [], stderr: Buffer[] = [];
@@ -156,7 +156,7 @@ export async function runHarness(input: AdapterManifest, task: string, options: 
       if (!child.pid) return;
       try { if (process.platform !== 'win32') process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch { /* Already reaped. */ }
     };
-    const stop = (code, message) => { failure ??= new AdapterError(code, message); kill(); };
+    const stop = (code: string, message: string) => { failure ??= new AdapterError(code, message); kill(); };
     const abort = () => stop('ABORTED', 'Harness invocation aborted');
     const timer = setTimeout(() => stop('TIMEOUT', 'Harness exceeded its execution deadline'), adapter.runtime.timeoutMs);
     const cleanup = () => { clearTimeout(timer); options.signal?.removeEventListener('abort', abort); };
@@ -202,7 +202,7 @@ export function createInferenceClient({ model, baseUrl = INFERENCE_URL, developm
   integer(maxResponseBytes, 1, 16777216, 'maxResponseBytes');
   const endpoint = inferenceEndpoint(baseUrl, development);
   return Object.freeze({
-    async chat(messages: ChatMessage[], { signal, ...parameters }: ChatOptions = {}) {
+    async chat(messages: ChatMessage[], { signal, ...parameters }: ChatOptions = {}): Promise<ChatResponse> {
       if (!Array.isArray(messages) || messages.length === 0 || !messages.every((message) => record(message) && ['system', 'developer', 'user', 'assistant', 'tool'].includes(message.role))) throw new AdapterError('INVALID_MESSAGES', 'A non-empty messages array with valid roles is required');
       if (Object.keys(parameters).some((key) => !['temperature', 'max_tokens', 'max_completion_tokens', 'tools', 'tool_choice', 'response_format', 'seed', 'top_p'].includes(key))) throw new AdapterError('INVALID_PARAMETERS', 'Unsupported inference parameter; streaming and credential overrides are not accepted');
       const body = JSON.stringify({ ...parameters, model, messages, stream: false });
@@ -225,7 +225,7 @@ export function createInferenceClient({ model, baseUrl = INFERENCE_URL, developm
         }
         const reader = response.body?.getReader();
         if (!reader) throw new AdapterError('INVALID_RESPONSE', 'Inference response has no body');
-        const chunks = [];
+        const chunks: Buffer[] = [];
         let bytes = 0;
         while (true) {
           const { value, done } = await reader.read();
@@ -234,11 +234,12 @@ export function createInferenceClient({ model, baseUrl = INFERENCE_URL, developm
           if (bytes > maxResponseBytes) { await reader.cancel(); throw new AdapterError('RESPONSE_LIMIT', 'Inference response exceeds its configured limit'); }
           chunks.push(Buffer.from(value));
         }
-        let result;
+        let result: unknown;
         try { result = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
         catch { throw new AdapterError('INVALID_RESPONSE', 'Inference returned invalid JSON'); }
         if (!record(result) || !Array.isArray(result.choices) || !record(result.choices[0]?.message)) throw new AdapterError('INVALID_RESPONSE', 'Inference did not return a Chat Completions message');
-        return result;
+        // The wire payload is extensible; preserve the existing response-shape check.
+        return result as ChatResponse;
       } catch (error) {
         if (error instanceof AdapterError) throw error;
         if (timedOut) throw new AdapterError('TIMEOUT', 'Inference deadline exceeded');
@@ -249,17 +250,17 @@ export function createInferenceClient({ model, baseUrl = INFERENCE_URL, developm
   });
 }
 
-export function digest(value) {
+export function digest(value: unknown): string {
   return createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
 }
 
-export function assertImageDigest(image) {
+export function assertImageDigest(image: string): string {
   if (typeof image !== 'string' || !/^[a-z0-9][a-z0-9._:/-]*@sha256:[a-f0-9]{64}$/.test(image)) throw new AdapterError('UNPINNED_IMAGE', 'Use an OCI image@sha256:<64 lowercase hex> reference');
   return image;
 }
 
 /** Pure argv construction; does not provision a gateway or create an inference route. */
-export function buildOpenShellCommand({ name, image, policy, task, allowMutableImage = false }) {
+export function buildOpenShellCommand({ name, image, policy, task, allowMutableImage = false }: OpenShellOptions): string[] {
   if (!/^[a-z][a-z0-9-]{0,47}$/.test(name ?? '')) throw new AdapterError('INVALID_NAME', 'Invalid sandbox name');
   if (allowMutableImage) {
     if (typeof image !== 'string' || !/^[a-z0-9][a-z0-9._:/@-]+$/.test(image)) throw new AdapterError('INVALID_IMAGE', 'Invalid development image reference');

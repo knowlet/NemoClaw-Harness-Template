@@ -4,18 +4,18 @@ import { performance } from 'node:perf_hooks';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { AdapterError, defineAdapter, digest, runHarness } from './sdk.js';
-import type { AdapterManifest } from './types.js';
+import type { RunOptions } from './types.js';
 import type {
-  HarnessSuite, SuiteReport, MockInferenceReply, MockInferenceServer,
+  HarnessSuite, SuiteReport, MockInferenceReply, MockInferenceServer, CaseResult, HarnessInvoke, SuiteOptions,
 } from './testing-types.js';
 export const SUITE_VERSION = 'harness-suite/v1' as const;
-const object = (v: unknown): v is Record<string, any> => v !== null && typeof v === 'object' && !Array.isArray(v);
-const text = (v, max) => typeof v === 'string' && Buffer.byteLength(v) <= max && !v.includes('\0');
-function fields(v, allowed) {
+const object = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
+const text = (v: unknown, max: number): v is string => typeof v === 'string' && Buffer.byteLength(v) <= max && !v.includes('\0');
+function fields(v: unknown, allowed: readonly string[]) {
   return object(v) && Object.keys(v).every((k) => allowed.includes(k));
 }
-function invalid() { throw new AdapterError('INVALID_SUITE', 'Invalid harness suite; see the versioned test-kit contract'); }
-function freeze(v) { if (v && typeof v === 'object') { Object.values(v).forEach(freeze); Object.freeze(v); } return v; }
+function invalid(): never { throw new AdapterError('INVALID_SUITE', 'Invalid harness suite; see the versioned test-kit contract'); }
+function freeze<T>(v: T): T { if (v && typeof v === 'object') { Object.values(v).forEach(freeze); Object.freeze(v); } return v; }
 export function defineSuite(input: HarnessSuite): Readonly<HarnessSuite> {
   if (!fields(input, ['version', 'name', 'cases']) || input.version !== SUITE_VERSION || !text(input.name, 128) || !input.name) invalid();
   if (!Array.isArray(input.cases) || input.cases.length < 1 || input.cases.length > 100) invalid();
@@ -31,29 +31,32 @@ export function defineSuite(input: HarnessSuite): Readonly<HarnessSuite> {
     if ('includes' in e && (!text(e.includes, 16384) || !e.includes)) invalid();
     if ('errorCode' in e && !/^[A-Z][A-Z0-9_]{0,63}$/.test(e.errorCode)) invalid();
   }
-  return freeze(JSON.parse(JSON.stringify(input)));
+  return freeze(JSON.parse(JSON.stringify(input)) as HarnessSuite);
 }
 
 /** Supply either an adapter or a custom invocation bridge, never both. Reports omit task/output/error messages. */
-export async function runSuite(input: HarnessSuite, options: any = {}): Promise<SuiteReport> {
+export function runSuite(input: HarnessSuite, options: SuiteOptions): Promise<SuiteReport>;
+export async function runSuite(input: HarnessSuite, options: RunOptions & Partial<Pick<SuiteOptions, 'adapter' | 'invoke'>> = {}): Promise<SuiteReport> {
   const suite = defineSuite(input);
   if (Boolean(options.adapter) === Boolean(options.invoke) || (options.invoke && typeof options.invoke !== 'function')) {
     throw new AdapterError('INVALID_SUITE_OPTIONS', 'Supply exactly one adapter or invoke function');
   }
   const adapter = options.adapter ? defineAdapter(options.adapter) : null;
   const started = performance.now();
-  const results = [];
+  const results: CaseResult[] = [];
   for (const c of suite.cases) {
     const start = performance.now();
-    let output, errorCode, failure;
+    let output: Awaited<ReturnType<HarnessInvoke>> | undefined;
+    let errorCode: string | undefined, failure: string | undefined;
     if (options.signal?.aborted) {
       results.push({ name: c.name, status: 'cancelled', durationMs: 0, failure: 'ABORTED' });
       continue;
     }
     const controller = new AbortController();
     const timeoutMs = c.timeoutMs ?? adapter?.runtime.timeoutMs ?? 120000;
-    let timer, abort;
-    const cancellation = new Promise((_, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let abort: (() => void) | undefined;
+    const cancellation = new Promise<never>((_, reject) => {
       abort = () => {
         reject(new AdapterError('ABORTED', 'Invocation cancelled'));
         controller.abort();
@@ -68,7 +71,7 @@ export async function runSuite(input: HarnessSuite, options: any = {}): Promise<
     try {
       const invocation = adapter ? runHarness(adapter, c.task, {
         cwd: options.cwd, home: options.home, parentEnv: options.parentEnv, signal: controller.signal,
-      }) : Promise.resolve().then(() => options.invoke(c.task, { signal: controller.signal, caseName: c.name }));
+      }) : Promise.resolve().then(() => options.invoke!(c.task, { signal: controller.signal, caseName: c.name }));
       output = await Promise.race([invocation, cancellation]);
       if (!output || typeof output.stdout !== 'string' || typeof output.stderr !== 'string' || output.exitCode !== 0) {
         errorCode = 'INVALID_RESULT'; output = undefined;
@@ -78,20 +81,22 @@ export async function runSuite(input: HarnessSuite, options: any = {}): Promise<
     } catch (error) {
       errorCode = error instanceof AdapterError && /^[A-Z][A-Z0-9_]{0,63}$/.test(error.code) ? error.code : 'INVOCATION_FAILED';
     } finally {
-      clearTimeout(timer); options.signal?.removeEventListener('abort', abort); controller.abort();
+      clearTimeout(timer); if (abort) options.signal?.removeEventListener('abort', abort); controller.abort();
     }
     const cancelled = options.signal?.aborted === true;
     if (cancelled) failure = 'ABORTED';
     else if ('errorCode' in c.expect) { if (errorCode !== c.expect.errorCode) failure = 'ERROR_MISMATCH'; }
     else if (errorCode) failure = errorCode;
-    else if ('stdout' in c.expect && output.stdout !== c.expect.stdout) failure = 'STDOUT_MISMATCH';
-    else if ('includes' in c.expect && !output.stdout.includes(c.expect.includes)) failure = 'STDOUT_MISMATCH';
+    else if (output) {
+      if ('stdout' in c.expect && output.stdout !== c.expect.stdout) failure = 'STDOUT_MISMATCH';
+      else if ('includes' in c.expect && !output.stdout.includes(c.expect.includes)) failure = 'STDOUT_MISMATCH';
+    }
     results.push({ name: c.name, status: cancelled ? 'cancelled' : failure ? 'failed' : 'passed', durationMs: Math.round(performance.now() - start),
       ...(failure ? { failure } : {}), ...(errorCode ? { errorCode } : {}),
       ...(output ? { stdoutSha256: digest(output.stdout), stdoutBytes: Buffer.byteLength(output.stdout), stderrBytes: Buffer.byteLength(output.stderr) } : {}),
     });
   }
-  const count = (status) => results.filter((c) => c.status === status).length;
+  const count = (status: CaseResult['status']) => results.filter((c) => c.status === status).length;
   return { version: SUITE_VERSION, name: suite.name, unofficial: true as const, suiteSha256: digest(suite),
     execution: adapter ? 'process' as const : 'custom-invoke' as const, sandboxVerified: false as const,
     passed: count('passed'), failed: count('failed'), cancelled: count('cancelled'),
@@ -101,10 +106,10 @@ export async function runSuite(input: HarnessSuite, options: any = {}): Promise<
 /** Loopback-only deterministic OpenAI-compatible fixture. It is NOT a model or a managed gateway. */
 export async function createMockInferenceServer({ replies = ['MOCK_OK'], model = 'fixture-model' }: { replies?: Array<string | MockInferenceReply>; model?: string } = {}): Promise<MockInferenceServer> {
   if (!Array.isArray(replies) || !replies.length || !replies.every((r) => typeof r === 'string' || (object(r) && (typeof r.content === 'string' || r.content === null) && (!r.tool_calls || Array.isArray(r.tool_calls))))) invalid();
-  const queue = JSON.parse(JSON.stringify(replies));
-  const requests = [];
+  const queue: Array<string | MockInferenceReply> = JSON.parse(JSON.stringify(replies));
+  const requests: MockInferenceServer['requests'] = [];
   const server = createServer(async (req, res) => {
-    const json = (status, body) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
+    const json = (status: number, body: unknown) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
     if (req.method === 'GET' && req.url === '/v1/models') return json(200, { object: 'list', data: [{ id: model, object: 'model' }] });
     if (req.method !== 'POST' || req.url !== '/v1/chat/completions') return json(404, { error: 'fixture_not_found' });
     let raw = '';
@@ -115,7 +120,7 @@ export async function createMockInferenceServer({ replies = ['MOCK_OK'], model =
       requests.push({ model: body.model, messageCount: body.messages?.length ?? 0, toolCount: body.tools?.length ?? 0, placeholderAuth: req.headers.authorization === 'Bearer openshell' });
       if (!queue.length) return json(503, { error: 'fixture_exhausted' });
       const reply = queue.shift();
-      const message = typeof reply === 'string' ? { role: 'assistant', content: reply } : { ...reply, role: 'assistant' };
+      const message: Partial<MockInferenceReply> & { role: string } = typeof reply === 'string' ? { role: 'assistant', content: reply } : { ...reply, role: 'assistant' };
       json(200, { id: `fixture-${requests.length}`, object: 'chat.completion', created: 0, model,
         choices: [{ index: 0, message, finish_reason: message.tool_calls ? 'tool_calls' : 'stop' }] });
     } catch { if (!res.writableEnded) json(400, { error: 'fixture_bad_request' }); }
@@ -129,8 +134,9 @@ export async function createMockInferenceServer({ replies = ['MOCK_OK'], model =
 }
 
 /** JUnit output contains only names, status codes, and timings; never task/output bodies. */
-export function toJUnit(report) {
-  const escape = (v) => String(v).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]);
+export function toJUnit(report: SuiteReport): string {
+  const entities: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' };
+  const escape = (v: unknown) => String(v).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '').replace(/[&<>"']/g, (c) => entities[c]);
   const cases = report.cases.map((c) => {
     const status = c.status === 'passed' ? '' : c.status === 'cancelled' ? '<skipped message="ABORTED"/>' : `<failure message="${escape(c.failure)}"/>`;
     return `  <testcase name="${escape(c.name)}" time="${c.durationMs / 1000}">${status}</testcase>`;

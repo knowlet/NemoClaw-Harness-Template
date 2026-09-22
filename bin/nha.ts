@@ -7,17 +7,23 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AdapterError, VERSION, NOTICE, createAdapter, loadAdapter, assertManagedFile, runHarness, buildOpenShellPlan, launchOpenShell, scaffold, renderPolicy, renderDockerfile, renderDeepSeekPatch } from '../src/index.js';
 
+const BOOLEAN_FLAGS = ['managed', 'allow-host', 'dev-image', 'help', 'version', 'replace', 'json'] as const;
+const VALUE_FLAGS = ['name', 'model', 'image', 'policy', 'task', 'task-file', 'output', 'nemoclaw', 'display-name', 'description', 'harness'] as const;
+type BooleanFlag = typeof BOOLEAN_FLAGS[number];
+type ValueFlag = typeof VALUE_FLAGS[number];
+type Flags = Partial<Record<BooleanFlag, true> & Record<ValueFlag, string>>;
+
 function parse(args: string[]) {
-  const positional: string[] = [], flags: Record<string, any> = {};
+  const positional: string[] = [], flags: Flags = {};
   for (let i = 0; i < args.length; i++) {
     const value = args[i];
     if (!value.startsWith('--')) { positional.push(value); continue; }
     const key = value.slice(2);
-    if (!['managed', 'allow-host', 'dev-image', 'name', 'model', 'image', 'policy', 'task', 'task-file', 'output', 'help', 'version', 'nemoclaw', 'replace', 'display-name', 'description', 'harness', 'json'].includes(key) || key in flags) throw new AdapterError('USAGE', 'Unknown or repeated option');
-    if (['managed', 'allow-host', 'dev-image', 'help', 'version', 'replace', 'json'].includes(key)) flags[key] = true;
+    if ((!BOOLEAN_FLAGS.includes(key as BooleanFlag) && !VALUE_FLAGS.includes(key as ValueFlag)) || key in flags) throw new AdapterError('USAGE', 'Unknown or repeated option');
+    if (BOOLEAN_FLAGS.includes(key as BooleanFlag)) flags[key as BooleanFlag] = true;
     else {
       if (args[i + 1] === undefined) throw new AdapterError('USAGE', 'Missing option value');
-      flags[key] = args[++i];
+      flags[key as ValueFlag] = args[++i];
     }
   }
   return { positional, flags };
@@ -36,8 +42,8 @@ async function main(): Promise<void> {
     console.error('UNOFFICIAL demo: local echo only; no sandbox and no inference request.');
     const dir = await mkdtemp(path.join(os.tmpdir(), 'nha-demo-'));
     try {
-      const adapter: any = structuredClone(createAdapter('echo'));
-      adapter.runtime.command = [process.execPath, fileURLToPath(new URL('../../examples/echo/agent.mjs', import.meta.url))];
+      const base = createAdapter('echo');
+      const adapter = { ...base, runtime: { ...base.runtime, command: [process.execPath, fileURLToPath(new URL('../../examples/echo/agent.mjs', import.meta.url))] } };
       const result = await runHarness(adapter, 'Hello, harness!', { cwd: dir, home: dir });
       process.stdout.write(result.stdout);
     } finally { await rm(dir, { recursive: true, force: true }); }
@@ -57,7 +63,7 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'plan' || command === 'launch') {
-    const options: any = { name: flags.name, image: flags.image, policy: flags.policy, task: flags.task, allowMutableImage: flags['dev-image'] === true };
+    const options = { name: flags.name ?? '', image: flags.image ?? '', policy: flags.policy ?? '', task: flags.task ?? '', allowMutableImage: flags['dev-image'] === true };
     const commands = buildOpenShellPlan(options);
     if (command === 'plan') {
       console.log(JSON.stringify({ notice: NOTICE, integration: 'OpenShell BYOC, not registered NemoClaw runtime', developmentImage: flags['dev-image'] === true, commands, prerequisites: ['Compatible OpenShell gateway', 'Image available to the gateway', 'Reviewed policy', 'An existing NemoClaw-compatible inference.local route for LLM tasks'] }, null, 2));
@@ -88,7 +94,7 @@ async function main(): Promise<void> {
     const [major, minor] = process.versions.node.split('.').map(Number);
     if (major < 24 || (major === 24 && minor < 5)) throw new AdapterError('NODE_VERSION', 'Managed launch requires Node 24.5+ for built-in proxy support');
   } else console.error('WARNING: --allow-host runs executable harness code on this host WITHOUT a sandbox.');
-  const task = flags['task-file'] ? await readFile(flags['task-file'], 'utf8') : flags.task;
+  const task = flags['task-file'] ? await readFile(flags['task-file'], 'utf8') : flags.task ?? '';
   const controller = new AbortController();
   const abort = () => controller.abort();
   process.once('SIGINT', abort); process.once('SIGTERM', abort);
