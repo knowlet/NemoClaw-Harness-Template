@@ -195,6 +195,25 @@ function inferenceEndpoint(baseUrl: string, development: boolean) {
   throw new AdapterError('INVALID_ENDPOINT', 'Only managed inference, or explicit loopback HTTP development, is permitted');
 }
 
+function isChatMessage(value: unknown): value is ChatMessage {
+  return record(value)
+    && typeof value.role === 'string'
+    && ['system', 'developer', 'user', 'assistant', 'tool'].includes(value.role)
+    && (value.tool_calls === undefined || Array.isArray(value.tool_calls))
+    && (value.tool_call_id === undefined || typeof value.tool_call_id === 'string');
+}
+
+/** Validate the declared response contract while retaining opaque content and extension fields. */
+function isChatResponse(value: unknown): value is ChatResponse {
+  if (!record(value) || !Array.isArray(value.choices) || value.choices.length === 0) return false;
+  if (!value.choices.every((choice: unknown) => record(choice)
+    && isChatMessage(choice.message)
+    && (choice.finish_reason === undefined || choice.finish_reason === null || typeof choice.finish_reason === 'string')
+    && (choice.index === undefined || (typeof choice.index === 'number' && Number.isFinite(choice.index))))) return false;
+  return value.usage === undefined || (record(value.usage)
+    && Object.values(value.usage).every((count) => typeof count === 'number' && Number.isFinite(count)));
+}
+
 /** Bounded, non-streaming Chat Completions client. No upstream API key is accepted. */
 export function createInferenceClient({ model, baseUrl = INFERENCE_URL, development = false, timeoutMs = 120000, maxResponseBytes = 8388608 }: Partial<InferenceOptions> = {}) {
   if (!text(model, 256)) throw new AdapterError('INVALID_MODEL', 'A model is required');
@@ -237,9 +256,8 @@ export function createInferenceClient({ model, baseUrl = INFERENCE_URL, developm
         let result: unknown;
         try { result = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
         catch { throw new AdapterError('INVALID_RESPONSE', 'Inference returned invalid JSON'); }
-        if (!record(result) || !Array.isArray(result.choices) || !record(result.choices[0]?.message)) throw new AdapterError('INVALID_RESPONSE', 'Inference did not return a Chat Completions message');
-        // The wire payload is extensible; preserve the existing response-shape check.
-        return result as ChatResponse;
+        if (!isChatResponse(result)) throw new AdapterError('INVALID_RESPONSE', 'Inference did not return a valid Chat Completions response');
+        return result;
       } catch (error) {
         if (error instanceof AdapterError) throw error;
         if (timedOut) throw new AdapterError('TIMEOUT', 'Inference deadline exceeded');
