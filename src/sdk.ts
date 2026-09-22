@@ -6,7 +6,7 @@ import { constants } from 'node:fs';
 import { lstat, open, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type {
-  AdapterManifest, RunOptions, RunResult, InferenceOptions, ChatMessage, ChatOptions, ChatResponse, OpenShellOptions,
+  AdapterManifest, RunOptions, RunResult, InferenceOptions, ChatMessage, ChatOptions, ChatResponse, ChatUsage, OpenShellOptions,
 } from './types.js';
 
 export const VERSION = '0.3.0' as const;
@@ -203,6 +203,13 @@ function isChatMessage(value: unknown): value is ChatMessage {
     && (value.tool_call_id === undefined || typeof value.tool_call_id === 'string');
 }
 
+/** Known scalar usage counters must be finite numbers; detail objects and other extensions stay opaque. */
+function isChatUsage(value: unknown): value is ChatUsage {
+  if (!record(value)) return false;
+  return ['prompt_tokens', 'completion_tokens', 'total_tokens'].every((key) =>
+    value[key] === undefined || (typeof value[key] === 'number' && Number.isFinite(value[key])));
+}
+
 /** Validate the declared response contract while retaining opaque content and extension fields. */
 function isChatResponse(value: unknown): value is ChatResponse {
   if (!record(value) || !Array.isArray(value.choices) || value.choices.length === 0) return false;
@@ -210,8 +217,7 @@ function isChatResponse(value: unknown): value is ChatResponse {
     && isChatMessage(choice.message)
     && (choice.finish_reason === undefined || choice.finish_reason === null || typeof choice.finish_reason === 'string')
     && (choice.index === undefined || (typeof choice.index === 'number' && Number.isFinite(choice.index))))) return false;
-  return value.usage === undefined || (record(value.usage)
-    && Object.values(value.usage).every((count) => typeof count === 'number' && Number.isFinite(count)));
+  return value.usage === undefined || isChatUsage(value.usage);
 }
 
 /** Bounded, non-streaming Chat Completions client. No upstream API key is accepted. */

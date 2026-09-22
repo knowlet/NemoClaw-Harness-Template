@@ -87,7 +87,7 @@ Local strict-hardening verification on Node 24.18.0: `npm run check` passed with
 
 ### Strict response boundary review
 
-The initial strict change asserted `ChatResponse` after checking only that the first choice had an object-valued message. That did not establish the required message role, the shape of later choices, or optional field types. A loopback HTTP regression matrix reproduced 17 malformed payloads that the old validator accepted. The client now uses runtime type guards for every choice and message, optional finish reasons/indexes/tool-call fields, and numeric usage records, then returns the narrowed value without a response assertion. Opaque content, tool-call entries, and extension fields are preserved.
+The initial strict change asserted `ChatResponse` after checking only that the first choice had an object-valued message. That did not establish the required message role, the shape of later choices, or optional field types. A loopback HTTP regression matrix reproduced 17 malformed payloads that the old validator accepted. The client now uses runtime type guards for every choice and message, optional finish reasons/indexes/tool-call fields, and usage objects whose known scalar counters are finite numbers, then returns the narrowed value without a response assertion. Structured usage detail fields and other extension values are permitted as opaque metadata. Opaque content, tool-call entries, and extension fields are preserved.
 
 The focused regression run passes all 27 malformed-payload cases plus valid-response preservation and sanitized-error checks. This deliberately changes malformed-response handling to `INVALID_RESPONSE`; it leaves the public TypeScript declarations unchanged.
 

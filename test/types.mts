@@ -17,6 +17,7 @@ import {
   type NativeVerificationReport,
   type NativeInstallResult,
   type ChatResponse,
+  type ChatUsage,
 } from '@knowlet/nemoclaw-harness-sdk';
 
 const exactVersion: '0.3.0' = VERSION;
@@ -27,6 +28,8 @@ void pending;
 const client = createInferenceClient({ model: 'm' });
 const response: Promise<ChatResponse> = client.chat([{ role: 'user', content: 'hello' }], { temperature: 0 });
 void response;
+const usage: ChatUsage = { prompt_tokens: 9, prompt_tokens_details: { cached_tokens: 0 } };
+void usage;
 const error: AdapterError = new AdapterError('TEST', 'test');
 const errorCode: string = error.code;
 void errorCode;

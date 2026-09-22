@@ -204,7 +204,9 @@ test('client rejects every response field that violates the declared ChatRespons
     ['null tool call id', { choices: [{ message: { role: 'tool', tool_call_id: null } }] }],
     ['null usage', { choices: [valid], usage: null }],
     ['array usage', { choices: [valid], usage: [1, 2] }],
+    ['non-object usage', { choices: [valid], usage: 'tokens' }],
     ['non-numeric usage entry', { choices: [valid], usage: { prompt_tokens: '3' } }],
+    ['null known usage counter', { choices: [valid], usage: { total_tokens: null } }],
   ];
   let body;
   const baseUrl = await server(t, (_req, res) => res.end(body));
@@ -235,7 +237,14 @@ test('client preserves valid choices, tool calls, optional fields, and provider 
       { message: { role: 'assistant', content: null, tool_calls: [{ id: 'call-1', function: { name: 'echo', arguments: '{}' } }], provider_extension: { reasoning: 'opaque' } }, finish_reason: 'tool_calls', index: 1 },
       { message: { role: 'tool', content: { result: 'OK' }, tool_call_id: 'call-1', tool_calls: [] }, finish_reason: 'provider-specific', index: 2 },
     ],
-    usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5, provider_metric: 0.5 },
+    usage: {
+      prompt_tokens: 9,
+      completion_tokens: 12,
+      total_tokens: 21,
+      prompt_tokens_details: { cached_tokens: 0, audio_tokens: 0 },
+      completion_tokens_details: { reasoning_tokens: 0, audio_tokens: 0, accepted_prediction_tokens: 0, rejected_prediction_tokens: 0 },
+      provider_metric: 0.5,
+    },
     provider_extension: { region: 'fixture' },
   };
   const baseUrl = await server(t, (_req, res) => res.end(JSON.stringify(response)));

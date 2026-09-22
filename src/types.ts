@@ -57,9 +57,18 @@ export interface ChatOptions {
   top_p?: number;
 }
 
+export interface ChatUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  prompt_tokens_details?: Record<string, unknown>;
+  completion_tokens_details?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
 export interface ChatResponse {
   choices: Array<{ message: ChatMessage; finish_reason?: string | null; index?: number }>;
-  usage?: Record<string, number>;
+  usage?: ChatUsage;
   [key: string]: unknown;
 }
 

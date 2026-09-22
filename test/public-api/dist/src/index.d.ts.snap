@@ -1,4 +1,4 @@
-export type { AdapterManifest, RunOptions, RunResult, ChatMessage, ChatOptions, ChatResponse, InferenceOptions, OpenShellOptions, OpenShellPlan, NativeAgentInput, NativeAgentDefinition, NativeInstallResult, NativeVerificationReport, } from './types.js';
+export type { AdapterManifest, RunOptions, RunResult, ChatMessage, ChatOptions, ChatResponse, ChatUsage, InferenceOptions, OpenShellOptions, OpenShellPlan, NativeAgentInput, NativeAgentDefinition, NativeInstallResult, NativeVerificationReport, } from './types.js';
 export type { HarnessCase, HarnessSuite, CaseResult, SuiteReport, HarnessInvoke, SuiteOptions, MockInferenceReply, MockInferenceServer, } from './testing-types.js';
 import type { AdapterManifest, RunOptions, RunResult, ChatMessage, ChatOptions, ChatResponse, InferenceOptions, OpenShellOptions, OpenShellPlan, NativeAgentInput, NativeAgentDefinition, NativeInstallResult, NativeVerificationReport } from './types.js';
 import type { HarnessSuite, SuiteReport, SuiteOptions, MockInferenceReply, MockInferenceServer } from './testing-types.js';
