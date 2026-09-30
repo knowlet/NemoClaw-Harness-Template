@@ -11,6 +11,7 @@ export type {
   ChatMessage,
   ChatOptions,
   ChatResponse,
+  ChatUsage,
   InferenceOptions,
   OpenShellOptions,
   OpenShellPlan,
@@ -37,6 +38,7 @@ import type {
   ChatMessage,
   ChatOptions,
   ChatResponse,
+  ChatUsage,
   InferenceOptions,
   OpenShellOptions,
   OpenShellPlan,
@@ -63,9 +65,7 @@ export interface AdapterError extends Error {
 }
 export const AdapterError: {
   new (code: string, message: string): AdapterError;
-} = sdk.AdapterError as unknown as {
-  new (code: string, message: string): AdapterError;
-};
+} = sdk.AdapterError;
 
 export const defineAdapter: (input: AdapterManifest) => Readonly<AdapterManifest> = sdk.defineAdapter;
 export const createAdapter: (name?: string, model?: string) => Readonly<AdapterManifest> = sdk.createAdapter;
@@ -80,10 +80,10 @@ export const runHarness: (
   adapter: AdapterManifest,
   task: string,
   options?: RunOptions,
-) => Promise<RunResult> = sdk.runHarness as unknown as (adapter: AdapterManifest, task: string, options?: RunOptions) => Promise<RunResult>;
+) => Promise<RunResult> = sdk.runHarness;
 export const createInferenceClient: (options: InferenceOptions) => Readonly<{
   chat(messages: ChatMessage[], options?: ChatOptions): Promise<ChatResponse>;
-}> = sdk.createInferenceClient as unknown as (options: InferenceOptions) => Readonly<{ chat(messages: ChatMessage[], options?: ChatOptions): Promise<ChatResponse> }>;
+}> = sdk.createInferenceClient;
 export const digest: (value: unknown) => string = sdk.digest;
 export const assertImageDigest: (image: string) => string = sdk.assertImageDigest;
 export const buildOpenShellCommand: (options: OpenShellOptions) => string[] = sdk.buildOpenShellCommand;
@@ -100,16 +100,16 @@ export const buildOpenShellPlan: (options: OpenShellOptions) => OpenShellPlan = 
 export const launchOpenShell: (
   options: OpenShellOptions,
   controls?: { signal?: AbortSignal },
-) => Promise<{ name: string; taskSucceeded: true }> = deploy.launchOpenShell as unknown as (options: OpenShellOptions, controls?: { signal?: AbortSignal }) => Promise<{ name: string; taskSucceeded: true }>;
+) => Promise<{ name: string; taskSucceeded: true }> = deploy.launchOpenShell;
 
 export const SUITE_VERSION: 'harness-suite/v1' = testkit.SUITE_VERSION;
 export const defineSuite: (input: HarnessSuite) => Readonly<HarnessSuite> = testkit.defineSuite;
-export const runSuite: (input: HarnessSuite, options: SuiteOptions) => Promise<SuiteReport> = testkit.runSuite as unknown as (input: HarnessSuite, options: SuiteOptions) => Promise<SuiteReport>;
+export const runSuite: (input: HarnessSuite, options: SuiteOptions) => Promise<SuiteReport> = testkit.runSuite;
 export const toJUnit: (report: SuiteReport) => string = testkit.toJUnit;
 export const createMockInferenceServer: (options?: {
   model?: string;
   replies?: Array<string | MockInferenceReply>;
-}) => Promise<MockInferenceServer> = testkit.createMockInferenceServer as unknown as (options?: { model?: string; replies?: Array<string | MockInferenceReply> }) => Promise<MockInferenceServer>;
+}) => Promise<MockInferenceServer> = testkit.createMockInferenceServer;
 
 export const NATIVE_CONTRACT: Readonly<{
   upstream: string;

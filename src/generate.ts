@@ -4,16 +4,17 @@ import { mkdir, readFile, writeFile, mkdtemp, rm, lstat, cp, readdir } from 'nod
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AdapterError, createAdapter, defineAdapter, NOTICE } from './sdk.js';
+import type { AdapterManifest } from './types.js';
 const root = fileURLToPath(new URL('../../', import.meta.url));
-export function renderPolicy(input) {
+export function renderPolicy(input: AdapterManifest) {
   const adapter = defineAdapter(input);
   return `# UNOFFICIAL OpenShell BYOC baseline. Not a NemoClaw policy preset.\nversion: 1\nfilesystem_policy:\n  include_workdir: false\n  read_only: [/usr, /lib, /etc, /opt, /proc, /dev/urandom]\n  read_write: [${JSON.stringify(adapter.state.home)}, ${JSON.stringify(adapter.state.workspace)}, /tmp, /dev/null]\nlandlock:\n  compatibility: hard_requirement\nnetwork_policies: {}\n`;
 }
-export function renderDockerfile(input) {
+export function renderDockerfile(input: AdapterManifest) {
   const adapter = defineAdapter(input);
   return `# UNOFFICIAL. Supply a reviewed Debian-based Node 24.5+ image digest for releases.\nARG BASE_IMAGE\nFROM \${BASE_IMAGE}\nUSER root\nRUN apt-get update && apt-get install -y --no-install-recommends ca-certificates iproute2 nftables \\\n    && rm -rf /var/lib/apt/lists/*\nWORKDIR /opt/nha\nCOPY --chown=root:root . /opt/nha/\nRUN mkdir -p /etc/nha ${adapter.state.home} ${adapter.state.workspace} \\\n    && cp /opt/nha/adapter.json /etc/nha/adapter.json \\\n    && chmod -R go-w /opt/nha /etc/nha \\\n    && chmod 0444 /etc/nha/adapter.json \\\n    && chown -R 1000:1000 ${adapter.state.home} ${adapter.state.workspace}\nENV NODE_USE_ENV_PROXY=1\nLABEL org.opencontainers.image.vendor="knowlet (independent community project)" \\\n      dev.knowlet.nha.unofficial="true"\nUSER 1000:1000\nWORKDIR ${adapter.state.workspace}\n# OpenShell replaces ENTRYPOINT; the launch command MUST be passed after --.\nENTRYPOINT ["/usr/local/bin/node", "/opt/nha/bin/nha.mjs", "exec", "/etc/nha/adapter.json", "--managed"]\n`;
 }
-export function renderDeepSeekPatch(input) {
+export function renderDeepSeekPatch(input: AdapterManifest) {
   const adapter = defineAdapter(input);
   // JSON is a YAML subset. These are Cordis patch rows, NOT a guessed model: config.
   return `${JSON.stringify([
@@ -28,11 +29,11 @@ export function renderDeepSeekPatch(input) {
 }
 
 /** Create a fresh scaffold with an exclusive destination claim; never overwrite existing files. */
-export async function scaffold(destination, { name = 'my-harness', model = 'managed-model' } = {}) {
+export async function scaffold(destination: string, { name = 'my-harness', model = 'managed-model' } = {}) {
   const adapter = createAdapter(name, model);
   const output = path.resolve(destination);
   try { await lstat(output); throw new AdapterError('DESTINATION_EXISTS', 'Refusing to overwrite an existing destination'); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  catch (error) { if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error; }
   await mkdir(path.dirname(output), { recursive: true });
   const temp = await mkdtemp(path.join(path.dirname(output), '.nha-init-'));
   try {

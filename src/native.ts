@@ -93,13 +93,13 @@ const VERIFY_MAX_BYTES = 1 << 20;
 
 function fail(code: string, message: string): never { throw new AdapterError(code, message); }
 
-function shortText(value, max, label) {
+function shortText(value: unknown, max: number, label: string): string {
   if (typeof value !== 'string' || value.length === 0 || value.length > max || /[\u0000\r\n]/.test(value)) fail('INVALID_MANIFEST', 'Invalid ' + label);
   return value;
 }
 
-const yaml = (value) => JSON.stringify(value);
-const lines = (...rows) => rows.join('\n') + '\n';
+const yaml = (value: string): string => JSON.stringify(value);
+const lines = (...rows: string[]): string => rows.join('\n') + '\n';
 
 /** Normalize and validate a native agent request. */
 export function defineNativeAgent(input: Partial<NativeAgentInput> | null = {}): NativeAgentDefinition {
@@ -124,7 +124,7 @@ export function defineNativeAgent(input: Partial<NativeAgentInput> | null = {}):
 }
 
 /** Render the upstream manifest.yaml that NemoClaw's agent loader reads. */
-export function renderNativeManifest(input) {
+export function renderNativeManifest(input?: Partial<NativeAgentInput>) {
   const agent = defineNativeAgent(input);
   return lines(
     '# ' + NOTICE,
@@ -158,7 +158,7 @@ export function renderNativeManifest(input) {
 }
 
 /** Render the baseline policy NemoClaw requires for a non-OpenClaw agent. */
-export function renderNativePolicy(input) {
+export function renderNativePolicy(input?: Partial<NativeAgentInput>) {
   const agent = defineNativeAgent(input);
   return lines(
     '# ' + NOTICE,
@@ -194,7 +194,7 @@ export function renderNativePolicy(input) {
  * Render the sandbox image. NemoClaw stages the whole checkout as the Docker
  * build context, so the COPY sources stay repository-relative.
  */
-export function renderNativeDockerfile(input) {
+export function renderNativeDockerfile(input?: Partial<NativeAgentInput>) {
   const agent = defineNativeAgent(input);
   return lines(
     '# ' + NOTICE,
@@ -220,7 +220,7 @@ export function renderNativeDockerfile(input) {
  * executable at the manifest's binary_path, so the harness gets a stable
  * launcher rather than relying on a bare interpreter name.
  */
-export function renderNativeLauncher(input) {
+export function renderNativeLauncher(input?: Partial<NativeAgentInput>) {
   const agent = defineNativeAgent(input);
   return lines(
     '#!/bin/sh',
@@ -268,7 +268,7 @@ export function renderNativeHarnessTest(input: Partial<NativeAgentInput> = {}) {
 }
 
 /** Render the image entrypoint. It keeps the managed sandbox alive for exec calls. */
-export function renderNativeStart(input) {
+export function renderNativeStart(input?: Partial<NativeAgentInput>) {
   const agent = defineNativeAgent(input);
   return lines(
     '#!/bin/bash -p',
@@ -285,7 +285,7 @@ export function renderNativeStart(input) {
 }
 
 /** Render the deterministic starter harness. Replace it with a real runtime. */
-export function renderNativeHarness(input) {
+export function renderNativeHarness(input?: Partial<NativeAgentInput>) {
   const agent = defineNativeAgent(input);
   return lines(
     '#!/usr/bin/env node',
@@ -307,7 +307,7 @@ export function renderNativeHarness(input) {
 }
 
 /** Render the dependency record NemoClaw keeps beside each agent. */
-export function renderNativeDependencyReview(input) {
+export function renderNativeDependencyReview(input?: Partial<NativeAgentInput>) {
   const agent = defineNativeAgent(input);
   return lines(
     '# ' + agent.name + ' Dependency Review',
@@ -328,7 +328,7 @@ export function renderNativeDependencyReview(input) {
 }
 
 /** Render the packaging metadata used for install and verification. */
-export function renderNativeMetadata(input) {
+export function renderNativeMetadata(input?: Partial<NativeAgentInput>) {
   const agent = defineNativeAgent(input);
   return JSON.stringify({
     pack: 'nemoclaw-native-agent',
@@ -348,7 +348,7 @@ export function renderNativeMetadata(input) {
 }
 
 /** Build the complete file map for a native agent package. */
-export function renderNativePackage(input) {
+export function renderNativePackage(input?: Partial<NativeAgentInput>) {
   const agent = defineNativeAgent(input);
   return Object.freeze({
     [NATIVE_CONTRACT.manifest]: renderNativeManifest(agent),
@@ -372,9 +372,9 @@ export function nativeAgentDir(nemoclawRoot: string, name: string): string {
   return path.join(path.resolve(nemoclawRoot), NATIVE_CONTRACT.agentRoot, name);
 }
 
-async function exists(target) {
+async function exists(target: string): Promise<boolean> {
   try { await lstat(target); return true; }
-  catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+  catch (error) { if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false; throw error; }
 }
 
 interface NativeCheckoutOptions {
@@ -462,12 +462,12 @@ async function assertNativePackageFiles(directory: string, files: readonly strin
   }
 }
 
-function isSameOrInside(parent, child) {
+function isSameOrInside(parent: string, child: string): boolean {
   const relative = path.relative(parent, child);
   return relative === '' || (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative));
 }
 
-async function canonicalOrNull(target) {
+async function canonicalOrNull(target: string): Promise<string | null> {
   try { return await realpath(target); }
   catch { return null; }
 }
@@ -477,11 +477,11 @@ async function canonicalOrNull(target) {
  * for a different agent or a different upstream revision would install under one name
  * and load another, so those mismatches fail before anything reaches the checkout.
  */
-interface NativePackageMetadata {
+interface NativePackageMetadata extends Record<string, unknown> {
   pack?: unknown;
   packVersion?: unknown;
   contract?: { upstream?: unknown; revision?: unknown };
-  agent?: { name?: unknown };
+  agent?: Record<string, unknown> & { name?: unknown };
 }
 
 /** Read the top-level manifest name, tolerating quotes, comments, and spacing. */
@@ -545,7 +545,7 @@ async function assertNativePackageMatchesMetadata(directory: string, metadata: N
 }
 
 /** Create a native agent package. The destination must not already exist. */
-export async function scaffoldNativeAgent(destination, input = {}) {
+export async function scaffoldNativeAgent(destination: string, input: Partial<NativeAgentInput> = {}) {
   const agent = defineNativeAgent(input);
   const output = path.resolve(destination);
   if (await exists(output)) fail('DESTINATION_EXISTS', 'Refusing to overwrite an existing destination');
@@ -564,9 +564,10 @@ export async function scaffoldNativeAgent(destination, input = {}) {
 }
 
 /** Read and validate a native agent package built by this SDK. */
-export async function readNativePackage(directory) {
+export async function readNativePackage(directory: string) {
   const target = path.resolve(directory);
-  let metadata;
+  // These fields are checked below before the parsed package reaches a caller.
+  let metadata: NativePackageMetadata & { packVersion: number; agent: Record<string, unknown> & { name: string } };
   try { metadata = JSON.parse(await readFile(path.join(target, NATIVE_CONTRACT.metadata), 'utf8')); }
   catch { fail('INVALID_PACKAGE', 'Not a native agent package: missing ' + NATIVE_CONTRACT.metadata); }
   if (metadata?.pack !== 'nemoclaw-native-agent') fail('INVALID_PACKAGE', 'Unsupported native agent package format');
@@ -699,7 +700,7 @@ export async function verifyNativeAgent({ nemoclawRoot, name, timeoutMs = 120000
   await writeFile(probe, nativeVerifySource());
   try {
     const child = spawn(process.execPath, [probe, name], { cwd: root, shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
-    const out = [];
+    const out: Buffer[] = [];
     let stdoutBytes = 0;
     let exceeded = false;
     let stderrTail = '';
@@ -718,7 +719,7 @@ export async function verifyNativeAgent({ nemoclawRoot, name, timeoutMs = 120000
     const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs);
     let code;
     try {
-      code = await new Promise((resolve, reject) => {
+      code = await new Promise<number | null>((resolve, reject) => {
         child.once('error', () => reject(new AdapterError('VERIFY_FAILED', 'Cannot execute the NemoClaw checkout')));
         child.once('close', resolve);
       });

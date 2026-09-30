@@ -1,0 +1,11 @@
+export type { HarnessCase, HarnessSuite, CaseResult, SuiteReport, HarnessInvoke, SuiteOptions, MockInferenceReply, MockInferenceServer, } from './testing-types.js';
+import type { HarnessSuite, SuiteReport, SuiteOptions, MockInferenceReply, MockInferenceServer } from './testing-types.js';
+export declare const SUITE_VERSION: 'harness-suite/v1';
+export declare const defineSuite: (input: HarnessSuite) => Readonly<HarnessSuite>;
+export declare const runSuite: (input: HarnessSuite, options: SuiteOptions) => Promise<SuiteReport>;
+export declare const toJUnit: (report: SuiteReport) => string;
+export declare const createMockInferenceServer: (options?: {
+    model?: string;
+    replies?: Array<string | MockInferenceReply>;
+}) => Promise<MockInferenceServer>;
+//# sourceMappingURL=testing.d.ts.map

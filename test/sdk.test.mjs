@@ -177,6 +177,89 @@ test('invalid JSON and missing choices are sanitized', async (t) => {
     await assert.rejects(createInferenceClient({ model: 'm', baseUrl, development: true }).chat([{ role: 'user', content: 'x' }]), code('INVALID_RESPONSE'));
   }
 });
+test('client rejects every response field that violates the declared ChatResponse contract', async (t) => {
+  const valid = { message: { role: 'assistant', content: 'OK' } };
+  const cases = [
+    ['null response', null],
+    ['array response', []],
+    ['missing choices', {}],
+    ['non-array choices', { choices: {} }],
+    ['empty choices', { choices: [] }],
+    ['non-object choice', { choices: [null] }],
+    ['array choice', { choices: [[]] }],
+    ['missing message', { choices: [{}] }],
+    ['null message', { choices: [{ message: null }] }],
+    ['array message', { choices: [{ message: [] }] }],
+    ['missing role', { choices: [{ message: {} }] }],
+    ['unknown role', { choices: [{ message: { role: 'provider' } }] }],
+    ['non-string role', { choices: [{ message: { role: 42 } }] }],
+    ['later null choice', { choices: [valid, null] }],
+    ['later missing role', { choices: [valid, { message: {} }] }],
+    ['non-string finish reason', { choices: [valid, { ...valid, finish_reason: false }] }],
+    ['non-numeric index', { choices: [valid, { ...valid, index: '1' }] }],
+    ['null index', { choices: [{ ...valid, index: null }] }],
+    ['non-array tool calls', { choices: [{ message: { role: 'assistant', tool_calls: {} } }] }],
+    ['null tool calls', { choices: [{ message: { role: 'assistant', tool_calls: null } }] }],
+    ['non-string tool call id', { choices: [{ message: { role: 'tool', tool_call_id: 7 } }] }],
+    ['null tool call id', { choices: [{ message: { role: 'tool', tool_call_id: null } }] }],
+    ['null usage', { choices: [valid], usage: null }],
+    ['array usage', { choices: [valid], usage: [1, 2] }],
+    ['non-object usage', { choices: [valid], usage: 'tokens' }],
+    ['non-numeric usage entry', { choices: [valid], usage: { prompt_tokens: '3' } }],
+    ['null known usage counter', { choices: [valid], usage: { total_tokens: null } }],
+  ];
+  let body;
+  const baseUrl = await server(t, (_req, res) => res.end(body));
+  const client = createInferenceClient({ model: 'm', baseUrl, development: true });
+  for (const [name, response] of cases) {
+    await t.test(name, async () => {
+      body = JSON.stringify(response);
+      await assert.rejects(client.chat([{ role: 'user', content: 'x' }]), code('INVALID_RESPONSE'));
+    });
+  }
+  for (const [name, response] of [
+    ['overflowing index', '{"choices":[{"message":{"role":"assistant"},"index":1e400}]}'],
+    ['overflowing usage', '{"choices":[{"message":{"role":"assistant"}}],"usage":{"total_tokens":1e400}}'],
+  ]) {
+    await t.test(name, async () => {
+      body = response;
+      await assert.rejects(client.chat([{ role: 'user', content: 'x' }]), code('INVALID_RESPONSE'));
+    });
+  }
+});
+test('client preserves valid choices, tool calls, optional fields, and provider extensions', async (t) => {
+  const response = {
+    id: 'completion-1',
+    choices: [
+      { message: { role: 'system' } },
+      { message: { role: 'developer', content: [{ type: 'text', text: 'instructions' }] }, finish_reason: null },
+      { message: { role: 'user', content: 'task' }, index: 0 },
+      { message: { role: 'assistant', content: null, tool_calls: [{ id: 'call-1', function: { name: 'echo', arguments: '{}' } }], provider_extension: { reasoning: 'opaque' } }, finish_reason: 'tool_calls', index: 1 },
+      { message: { role: 'tool', content: { result: 'OK' }, tool_call_id: 'call-1', tool_calls: [] }, finish_reason: 'provider-specific', index: 2 },
+    ],
+    usage: {
+      prompt_tokens: 9,
+      completion_tokens: 12,
+      total_tokens: 21,
+      prompt_tokens_details: { cached_tokens: 0, audio_tokens: 0 },
+      completion_tokens_details: { reasoning_tokens: 0, audio_tokens: 0, accepted_prediction_tokens: 0, rejected_prediction_tokens: 0 },
+      provider_metric: 0.5,
+    },
+    provider_extension: { region: 'fixture' },
+  };
+  const baseUrl = await server(t, (_req, res) => res.end(JSON.stringify(response)));
+  const actual = await createInferenceClient({ model: 'm', baseUrl, development: true }).chat([{ role: 'user', content: 'x' }]);
+  assert.deepEqual(actual, response);
+});
+test('invalid response shape errors do not expose provider data', async (t) => {
+  const baseUrl = await server(t, (_req, res) => res.end(JSON.stringify({ choices: [{ message: { content: 'PROVIDER_SECRET' } }], debug: 'PROVIDER_SECRET' })));
+  await assert.rejects(createInferenceClient({ model: 'm', baseUrl, development: true }).chat([{ role: 'user', content: 'x' }]), (error) => {
+    assert.equal(error.code, 'INVALID_RESPONSE');
+    assert.ok(!error.message.includes('PROVIDER_SECRET'));
+    assert.ok(!JSON.stringify(error).includes('PROVIDER_SECRET'));
+    return true;
+  });
+});
 test('digest is stable for an identical serialized manifest', () => assert.equal(digest(fresh()), digest(fresh())));
 test('OCI digests are required by default, never fabricated', () => {
   assert.throws(() => assertImageDigest('repo:latest'), code('UNPINNED_IMAGE'));

@@ -3,21 +3,25 @@
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { AdapterError, NOTICE, NATIVE_CONTRACT, scaffoldNativeAgent, installNativeAgent, verifyNativeAgent } from '../src/index.js';
+import type { NativeAgentInput } from '../src/index.js';
 
-const BOOLEAN_FLAGS = new Set(['replace', 'allow-unsupported-upstream', 'help']);
-const VALUE_FLAGS = new Set(['name', 'nemoclaw', 'display-name', 'description', 'harness', 'model', 'json']);
+const BOOLEAN_FLAGS = ['replace', 'allow-unsupported-upstream', 'help'] as const;
+const VALUE_FLAGS = ['name', 'nemoclaw', 'display-name', 'description', 'harness', 'model', 'json'] as const;
+type BooleanFlag = typeof BOOLEAN_FLAGS[number];
+type ValueFlag = typeof VALUE_FLAGS[number];
+type Flags = Partial<Record<BooleanFlag, true> & Record<ValueFlag, string>>;
 
 function parse(args: string[]) {
-  const positional: string[] = [], flags: Record<string, any> = {};
+  const positional: string[] = [], flags: Flags = {};
   for (let i = 0; i < args.length; i++) {
     const value = args[i];
     if (!value.startsWith('--')) { positional.push(value); continue; }
     const key = value.slice(2);
-    if ((!BOOLEAN_FLAGS.has(key) && !VALUE_FLAGS.has(key)) || key in flags) throw new AdapterError('USAGE', 'Unknown or repeated option');
-    if (BOOLEAN_FLAGS.has(key)) flags[key] = true;
+    if ((!BOOLEAN_FLAGS.includes(key as BooleanFlag) && !VALUE_FLAGS.includes(key as ValueFlag)) || key in flags) throw new AdapterError('USAGE', 'Unknown or repeated option');
+    if (BOOLEAN_FLAGS.includes(key as BooleanFlag)) flags[key as BooleanFlag] = true;
     else {
       if (args[i + 1] === undefined) throw new AdapterError('USAGE', 'Missing option value');
-      flags[key] = args[++i];
+      flags[key as ValueFlag] = args[++i];
     }
   }
   return { positional, flags };
@@ -43,7 +47,8 @@ export async function nativeCommand(args: string[]) {
   if (!action || flags.help) { help(); return; }
   if (action === 'init') {
     if (!directory) throw new AdapterError('USAGE', 'native init requires a destination');
-    const input = {
+    if (flags.harness !== undefined && flags.harness !== 'echo' && flags.harness !== 'external') throw new AdapterError('INVALID_MANIFEST', 'harness must be echo or external');
+    const input: NativeAgentInput = {
       name: flags.name ?? path.basename(path.resolve(directory)),
       displayName: flags['display-name'],
       description: flags.description,

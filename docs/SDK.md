@@ -57,6 +57,8 @@ const response = await client.chat(
 
 Only `POST /v1/chat/completions` is implemented. Requests are capped at 1 MiB; responses are bounded while being read, with the deadline covering the body as well as headers. Redirects are not followed. No automatic retries are performed, avoiding unexpected duplicate cost. HTTP error bodies are intentionally suppressed.
 
+Responses must satisfy the SDK's `ChatResponse` contract: a non-empty `choices` array, a message with a supported role in every choice, and valid types for optional finish reasons, indexes, tool-call arrays and IDs. When present, `usage` must be an object whose known scalar counters (`prompt_tokens`, `completion_tokens`, `total_tokens`) are finite numbers; structured detail fields such as `prompt_tokens_details` and `completion_tokens_details` are permitted as opaque metadata. Malformed responses reject with `INVALID_RESPONSE` without exposing provider data. Message content, tool-call entries, and extension fields remain opaque and are preserved; this check does not validate a tool's arguments or execute it.
+
 Supported options: `temperature`, `max_tokens`, `max_completion_tokens`, `tools`, `tool_choice`, `response_format`, `seed`, `top_p`, and `signal`. The configured provider/model must actually support any optional parameter. Unknown parameters, `stream`, custom headers, model overrides, and API-key overrides are rejected. Tool calls are returned to the application; no tools are executed automatically.
 
 For deterministic local tests only:
