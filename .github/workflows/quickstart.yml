@@ -35,9 +35,11 @@ jobs:
           npm ci --ignore-scripts
           npm run build
       - name: Run the quickstart exactly as documented
+        id: quickstart
+        continue-on-error: true
         run: |
           set -o pipefail
-          node scripts/quickstart.mjs --workdir "$RUNNER_TEMP/quickstart" --destroy --customize 2>&1 | tee "$RUNNER_TEMP/quickstart.log"
+          node scripts/quickstart.mjs --workdir "$RUNNER_TEMP/quickstart" --destroy --customize --json reports/quickstart.json 2>&1 | tee "$RUNNER_TEMP/quickstart.log"
       - name: Record the pinned versions used
         if: always()
         run: |
@@ -50,6 +52,41 @@ jobs:
             echo "trustedCILog: "The checksum-pinned OpenShell install is the same command the quickstart documents.""
           } > "$RUNNER_TEMP/quickstart-versions.txt"
           cat "$RUNNER_TEMP/quickstart-versions.txt"
+      - name: Clean up the sandbox owned by the quickstart
+        id: cleanup
+        if: always()
+        continue-on-error: true
+        env:
+          QUICKSTART_RESULT: ${{ steps.quickstart.outcome }}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          mkdir -p reports
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { cleanupSandbox, serializeReport, writeReportAtomically } from './scripts/lib/qualification.mjs';
+          let report;
+          try {
+            if (!fs.existsSync('reports/quickstart.json')) {
+              report = { status: process.env.QUICKSTART_RESULT === 'success' ? 'failed' : 'skipped', detail: 'No quickstart ownership receipt' };
+            } else {
+              const receipt = JSON.parse(fs.readFileSync('reports/quickstart.json', 'utf8'));
+              if (receipt.sandbox?.ownership !== 'owned' || receipt.stages?.cleanup?.status === 'passed') {
+                report = { status: 'skipped', detail: 'No owned sandbox remains to clean up' };
+              } else {
+                if (!receipt.sandbox.name || !receipt.checkout || !receipt.gateway?.name || !receipt.gateway.port || !receipt.gateway.workspace || receipt.nativeState?.ownership !== 'owned') {
+                  throw new Error('Quickstart receipt is missing native ownership or gateway binding');
+                }
+                // Retry the supported lifecycle operation; never bypass a retained-state refusal.
+                if (receipt.stages?.cleanup?.status === 'running') receipt.stages.cleanup = { status: 'failed', reason: 'prior workflow step has ended' };
+                await cleanupSandbox(receipt, { deploy: true, gateway: receipt.gateway.name, gatewayPort: receipt.gateway.port });
+                report = { ...receipt.stages.cleanup, sandbox: receipt.sandbox.name, gateway: receipt.gateway };
+              }
+            }
+          } catch (error) { report = { status: 'failed', detail: error.message }; }
+          await writeReportAtomically('reports/quickstart-cleanup.json', report);
+          console.log(serializeReport(report));
+          process.exitCode = ['passed', 'skipped'].includes(report.status) ? 0 : 1;
+          NODE
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -57,14 +94,12 @@ jobs:
           path: |
             ${{ runner.temp }}/quickstart.log
             ${{ runner.temp }}/quickstart-versions.txt
+            reports/quickstart.json
+            reports/quickstart-cleanup.json
           retention-days: 14
-      - name: Clean up any sandbox the run created
+      - name: Require the quickstart and cleanup to pass
         if: always()
-        run: |
-          export PATH="$HOME/.local/bin:$PATH"
-          if command -v openshell >/dev/null; then
-            openshell sandbox list || true
-            openshell sandbox delete my-sandbox || true
-            openshell sandbox delete my-harness || true
-          fi
-          docker ps -a --format '{{.Names}}' || true
+        env:
+          QUICKSTART_RESULT: ${{ steps.quickstart.outcome }}
+          CLEANUP_RESULT: ${{ steps.cleanup.outcome }}
+        run: test "$QUICKSTART_RESULT/$CLEANUP_RESULT" = success/success

@@ -10,6 +10,7 @@ import path from 'node:path';
 import {
   cleanupSandbox,
   createSandboxName,
+  main,
   resolveGatewayBinding,
   run,
 } from '../scripts/compatibility.mjs';
@@ -21,9 +22,14 @@ async function fakeCheckout(root) {
   await mkdir(path.join(root, 'bin'), { recursive: true });
   await mkdir(path.join(root, 'dist/lib/agent'), { recursive: true });
   await mkdir(path.join(root, 'dist/lib/onboard/workload'), { recursive: true });
+  await mkdir(path.join(root, 'dist/lib/state/registry'), { recursive: true });
+  await writeFile(path.join(root, 'dist/lib/state/registry/persistence.js'), 'exports.REGISTRY_FILE = ' + JSON.stringify(path.join(root, '.fixture-registry.json')) + ';\n');
+  await writeFile(path.join(root, 'dist/lib/state/onboard-session.js'), 'exports.SESSION_FILE = ' + JSON.stringify(path.join(root, '.fixture-session.json')) + '; exports.RETAINED_SANDBOX_RECOVERY_FILE = ' + JSON.stringify(path.join(root, '.fixture-retained.json')) + ';\n');
   await writeFile(path.join(root, 'package.json'), JSON.stringify({ name: 'nemoclaw', version: 'candidate', type: 'commonjs' }) + '\n');
   await writeFile(path.join(root, 'dist/lib/agent/defs.js'), [
     "const path = require('node:path');",
+    "if (process.env.NHA_LOADER_PID_FILE) require('node:fs').writeFileSync(process.env.NHA_LOADER_PID_FILE, String(process.pid));",
+    "if (process.env.NHA_LOADER_HANG) setInterval(() => {}, 1000);",
     "exports.listAgents = () => ['compat-echo'];",
     "exports.loadAgent = (name) => ({ dockerfilePath: path.join(process.cwd(), 'agents', name, 'Dockerfile'), runtime: { kind: 'terminal' }, configPaths: { dir: path.join(process.cwd(), 'agents', name) } });",
     '',
@@ -40,13 +46,25 @@ async function fakeCheckout(root) {
   await writeFile(path.join(root, 'bin/nemoclaw.js'), [
     "const fs = require('node:fs');",
     "const action = process.argv[2];",
+    "const registryPath = require('node:path').join(__dirname, '..', '.fixture-registry.json');",
+    "const sessionPath = require('node:path').join(__dirname, '..', '.fixture-session.json');",
     "if (process.env.NHA_ENV_LOG) fs.appendFileSync(process.env.NHA_ENV_LOG, action + ' port=' + String(process.env.NEMOCLAW_GATEWAY_PORT) + ' gateway=' + String(process.env.OPENSHELL_GATEWAY) + String.fromCharCode(10));",
+    "if (action === 'sandbox' && process.argv[3] === 'destroy') {",
+    "  if (process.env.NHA_NATIVE_DESTROY_REFUSE) { process.stderr.write('retained identity cannot be verified'); process.exit(1); }",
+    "  if (process.env.NHA_DELETE_EXPECT_SETTLED && JSON.parse(fs.readFileSync(process.env.NHA_DELETE_EXPECT_SETTLED, 'utf8')).cases[0].stages.onboard?.errorCode !== 'INTERRUPTED') process.exit(9);",
+    "  const finish = () => { fs.rmSync(registryPath, { force: true }); fs.rmSync(sessionPath, { force: true }); if (process.env.NHA_CREATED_MARKER) fs.rmSync(process.env.NHA_CREATED_MARKER, { force: true }); if (process.env.NHA_DELETE_LOG) fs.appendFileSync(process.env.NHA_DELETE_LOG, process.argv[4] + '\\n'); process.exit(0); };",
+    "  if (process.env.NHA_DELETE_PID_FILE) { fs.writeFileSync(process.env.NHA_DELETE_PID_FILE, String(process.pid)); setTimeout(finish, 1000); } else finish();",
+    "} else",
     "if (action === 'onboard') {",
+    "  const name = process.argv[process.argv.indexOf('--name') + 1];",
+    "  fs.writeFileSync(registryPath, JSON.stringify({ sandboxes: { [name]: { name } } }));",
+    "  fs.writeFileSync(sessionPath, JSON.stringify({ version: 1, status: 'complete', sandboxName: name, resumable: false }));",
     "  if (process.env.NHA_ONBOARD_PID_FILE) fs.writeFileSync(process.env.NHA_ONBOARD_PID_FILE, String(process.pid));",
     "  if (process.env.NHA_CREATED_MARKER) fs.writeFileSync(process.env.NHA_CREATED_MARKER, String(process.argv[process.argv.indexOf('--name') + 1]));",
     "  if (process.env.NHA_ONBOARD_SLEEP_MS) { setTimeout(() => process.exit(Number(process.env.NHA_ONBOARD_EXIT || '0')), Number(process.env.NHA_ONBOARD_SLEEP_MS)); }",
     "  else { process.exit(Number(process.env.NHA_ONBOARD_EXIT || '0')); }",
     "}",
+    "if (process.argv[3] === 'exec' && process.env.NHA_REPORT_FAIL_AFTER_EXEC) { fs.renameSync(process.env.NHA_REPORT_FAIL_AFTER_EXEC, process.env.NHA_REPORT_FAIL_AFTER_EXEC + '.saved'); fs.mkdirSync(process.env.NHA_REPORT_FAIL_AFTER_EXEC); }",
     "process.stdout.write('Echo: NHA_COMPAT_OK\\n');",
     '',
   ].join('\n'));
@@ -72,7 +90,9 @@ test('fake NemoClaw CLI fixture passes node --check', async () => {
 });
 
 function runCompatibility(args, env = {}) {
+  const checkout = args[args.indexOf('--checkout') + 1]?.split('=').slice(1).join('=');
   return spawnSync(process.execPath, [path.join(repo, 'scripts/compatibility.mjs'), ...args], {
+    cwd: checkout ? path.dirname(checkout) : repo,
     encoding: 'utf8',
     env: { ...process.env, ...env },
   });
@@ -107,7 +127,7 @@ async function waitForProcessExit(pid, timeoutMs = 15000) {
 async function fakeTooling(root) {
   const tools = path.join(root, 'tools');
   await mkdir(tools, { recursive: true });
-  await writeFile(path.join(tools, 'npm'), '#!/bin/sh\nexit 0\n');
+  await writeFile(path.join(tools, 'npm'), '#!/bin/sh\nif [ -n "$NHA_HANG_NPM_ARGS" ] && [ "$NHA_HANG_NPM_ARGS" = "$*" ]; then echo "$$" > "$NHA_TOOL_PID_FILE"; sleep 60; fi\nexit 0\n');
   await writeFile(path.join(tools, 'openshell'), [
     '#!/bin/sh',
     'if [ -n "$NHA_CALL_LOG" ]; then printf "%s\\n" "$*" >> "$NHA_CALL_LOG"; fi',
@@ -116,6 +136,7 @@ async function fakeTooling(root) {
     'if [ "$1" = "select" ] || [ "$1" = "get" ] || [ "$1" = "delete" ]; then subcommand="$1"; shift; fi',
     'if [ "$1" = "-g" ]; then shift 2; fi',
     'name="$1"',
+    'if [ -n "$NHA_HANG_TOOL" ] && [ "$NHA_HANG_TOOL" = "$command $subcommand" ]; then echo "$$" > "$NHA_TOOL_PID_FILE"; sleep 60; fi',
     'if [ "$command" = "gateway" ] && [ "$subcommand" = "select" ]; then',
     '  if [ -n "$NHA_GATEWAY_SELECT_EXIT" ]; then exit "$NHA_GATEWAY_SELECT_EXIT"; fi',
     '  exit 0',
@@ -127,9 +148,12 @@ async function fakeTooling(root) {
     'if [ "$command" = "sandbox" ] && [ "$subcommand" = "get" ]; then',
     '  if [ "$NHA_EXISTING_SANDBOX" = "$name" ]; then echo "Sandbox $name is running"; exit 0; fi',
     '  if [ -n "$NHA_CREATED_MARKER" ] && [ -f "$NHA_CREATED_MARKER" ] && [ "$(cat "$NHA_CREATED_MARKER")" = "$name" ]; then echo "Sandbox $name is running"; exit 0; fi',
+    '  if [ -n "$NHA_PREFLIGHT_SIGNAL" ]; then echo "sandbox $name not found"; kill -TERM "$$"; fi',
     '  echo "Error:   \u00d7 code: \x27Some requested entity was not found\x27, message: \\"sandbox not found\\"" >&2; exit 1',
     'fi',
     'if [ "$command" = "sandbox" ] && [ "$subcommand" = "delete" ]; then',
+    '  if [ -n "$NHA_DELETE_EXPECT_SETTLED" ]; then node -e "const r = JSON.parse(require(\'node:fs\').readFileSync(process.env.NHA_DELETE_EXPECT_SETTLED, \'utf8\')); if (r.cases[0].stages.onboard?.errorCode !== \'INTERRUPTED\') process.exit(9);" || exit 9; fi',
+    '  if [ -n "$NHA_DELETE_PID_FILE" ]; then echo "$$" > "$NHA_DELETE_PID_FILE"; sleep 1; fi',
     '  if [ -n "$NHA_DELETE_LOG" ]; then echo "$name" >> "$NHA_DELETE_LOG"; fi',
     '  exit 0',
     'fi',
@@ -218,6 +242,31 @@ test('an existing sandbox fails preflight without deletion', async () => {
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('a signaled preflight cannot claim ownership from partial absence output', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nha-compat-test-'));
+  try {
+    const checkout = path.join(root, 'NemoClaw');
+    await fakeCheckout(checkout);
+    const tools = await fakeTooling(root);
+    const deleted = path.join(root, 'deleted.log');
+    const created = path.join(root, 'created.log');
+    const result = runCompatibility(['--checkout', 'candidate=' + checkout, '--deploy', '--gateway', 'nemoclaw'], {
+      PATH: tools + ':' + process.env.PATH,
+      NEMOCLAW_GATEWAY_PORT: '8080',
+      NHA_PREFLIGHT_SIGNAL: '1',
+      NHA_DELETE_LOG: deleted,
+      NHA_CREATED_MARKER: created,
+    });
+    assert.equal(result.status, 1, result.stderr);
+    const candidate = JSON.parse(result.stdout).cases[0];
+    assert.equal(candidate.stages.preflight.signal, 'SIGTERM');
+    assert.equal(candidate.sandbox.ownership, 'unknown');
+    assert.equal(candidate.stages.cleanup.status, 'skipped');
+    await assert.rejects(() => readFile(created, 'utf8'));
+    await assert.rejects(() => readFile(deleted, 'utf8'));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('onboarding failure still cleans up an owned sandbox', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'nha-compat-test-'));
   try {
@@ -295,7 +344,7 @@ test('gateway binding selects and verifies one managed gateway for every sandbox
       'sandbox get -g nemoclaw ' + candidate.sandbox.name,
       // The second lookup proves onboarding created the sandbox on this gateway.
       'sandbox get -g nemoclaw ' + candidate.sandbox.name,
-      'sandbox delete -g nemoclaw ' + candidate.sandbox.name,
+      'sandbox get -g nemoclaw ' + candidate.sandbox.name,
     ]);
     assert.equal((await readFile(deleted, 'utf8')).trim(), candidate.sandbox.name);
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -465,10 +514,10 @@ test('a non-default port binds the probe, onboarding, and cleanup to one gateway
       'status -g nemoclaw-9090',
       'sandbox get -g nemoclaw-9090 ' + candidate.sandbox.name,
       'sandbox get -g nemoclaw-9090 ' + candidate.sandbox.name,
-      'sandbox delete -g nemoclaw-9090 ' + candidate.sandbox.name,
+      'sandbox get -g nemoclaw-9090 ' + candidate.sandbox.name,
     ]);
     const childEnv = (await readFile(envLog, 'utf8')).trim().split(String.fromCharCode(10));
-    assert.equal(childEnv.length, 2);
+    assert.equal(childEnv.length, 3);
     assert.match(childEnv[0], /^onboard port=9090 /);
     for (const line of childEnv) assert.match(line, /port=9090 /);
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -502,6 +551,7 @@ test('an interrupted run keeps its ownership receipt and cleans up its sandbox',
         NHA_DELETE_LOG: deleted,
         NHA_ONBOARD_PID_FILE: onboardPid,
         NHA_ONBOARD_SLEEP_MS: '60000',
+        NHA_DELETE_EXPECT_SETTLED: report,
       },
       stdio: 'ignore',
     });
@@ -525,6 +575,232 @@ test('an interrupted run keeps its ownership receipt and cleans up its sandbox',
     if (runner && runner.exitCode === null) runner.kill('SIGKILL');
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('loader interruption stops its process group and never proceeds to deployment', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nha-compat-loader-interrupt-'));
+  const checkout = path.join(root, 'NemoClaw');
+  const report = path.join(root, 'report.json');
+  const loaderPidFile = path.join(root, 'loader.pid');
+  const calls = path.join(root, 'calls.log');
+  let runner;
+  let loaderPid;
+  let exitTimer;
+  try {
+    await fakeCheckout(checkout);
+    const tools = await fakeTooling(root);
+    runner = spawn(process.execPath, [path.join(repo, 'scripts/compatibility.mjs'), '--checkout', 'candidate=' + checkout, '--deploy', '--gateway', 'nemoclaw', '--json', report], {
+      env: { ...process.env, PATH: tools + ':' + process.env.PATH, NEMOCLAW_GATEWAY_PORT: '8080', NHA_LOADER_PID_FILE: loaderPidFile, NHA_LOADER_HANG: '1', NHA_CALL_LOG: calls },
+      stdio: 'ignore',
+    });
+    loaderPid = Number(await waitForFile(loaderPidFile));
+    const exited = once(runner, 'exit');
+    runner.kill('SIGTERM');
+    const [code] = await Promise.race([
+      exited,
+      new Promise((_resolve, reject) => { exitTimer = setTimeout(() => reject(new Error('loader interruption did not settle')), 4000); }),
+    ]);
+    assert.equal(code, 143);
+    const parsed = JSON.parse(await readFile(report, 'utf8'));
+    assert.equal(parsed.status, 'interrupted');
+    assert.equal(parsed.cases[0].stages.loader.errorCode, 'INTERRUPTED');
+    assert.equal(parsed.cases[0].sandbox.ownership, 'unknown');
+    await assert.rejects(readFile(calls, 'utf8'), { code: 'ENOENT' });
+    assert.equal(await waitForProcessExit(loaderPid), true);
+  } finally {
+    clearTimeout(exitTimer);
+    if (runner && runner.exitCode === null) runner.kill('SIGKILL');
+    if (loaderPid) { try { process.kill(loaderPid, 'SIGKILL'); } catch {} }
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('workspace setup failure still writes a structured failed report', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nha-compat-workspace-failure-'));
+  try {
+    const checkout = path.join(root, 'NemoClaw');
+    await fakeCheckout(checkout);
+    const temporaryRoot = path.join(root, 'not-a-directory');
+    await writeFile(temporaryRoot, 'fixture');
+    const report = path.join(root, 'report.json');
+    const result = runCompatibility(['--checkout', 'candidate=' + checkout, '--json', report], { TMPDIR: temporaryRoot });
+    assert.equal(result.status, 1);
+    const parsed = JSON.parse(await readFile(report, 'utf8'));
+    assert.equal(parsed.status, 'failed');
+    assert.equal(parsed.error.errorCode, 'ENOTDIR');
+    assert.equal(JSON.parse(result.stdout).status, 'failed');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('compatibility main removes its signal listeners after returning', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nha-compat-listeners-'));
+  const listeners = new Map(['SIGINT', 'SIGTERM'].map((signal) => [signal, process.listeners(signal)]));
+  const previousExit = process.exitCode;
+  const previousLog = console.log;
+  try {
+    const checkout = path.join(root, 'NemoClaw');
+    await fakeCheckout(checkout);
+    console.log = () => {};
+    const report = await main(['--checkout', 'candidate=' + checkout, '--json', path.join(root, 'report.json')]);
+    assert.equal(report.status, 'passed');
+    for (const [signal, before] of listeners) assert.deepEqual(process.listeners(signal), before);
+  } finally {
+    console.log = previousLog;
+    process.exitCode = previousExit;
+    for (const [signal, before] of listeners) {
+      for (const listener of process.listeners(signal)) if (!before.includes(listener)) process.removeListener(signal, listener);
+    }
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+for (const phase of ['checkout', 'root-install', 'cli-install', 'cli-build', 'scaffold', 'install', 'gateway', 'preflight', 'exec']) {
+  test('interruption during ' + phase + ' persists its phase and stops subsequent work', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'nha-compat-phase-interrupt-'));
+    const checkout = path.join(root, 'NemoClaw');
+    const report = path.join(root, 'report.json');
+    const pidFile = path.join(root, 'blocked.pid');
+    const created = path.join(root, 'created.log');
+    const calls = path.join(root, 'calls.log');
+    const deleted = path.join(root, 'deleted.log');
+    let runner;
+    let blockedPid;
+    let exitTimer;
+    try {
+      await fakeCheckout(checkout);
+      const tools = await fakeTooling(root);
+      if (phase === 'checkout') {
+        await writeFile(path.join(tools, 'git'), '#!/bin/sh\necho "$$" > "$NHA_TOOL_PID_FILE"\nsleep 60\n');
+        await chmod(path.join(tools, 'git'), 0o755);
+      }
+      const preload = path.join(root, 'block-stage.cjs');
+      const action = phase === 'scaffold' ? 'init' : phase;
+      await writeFile(preload, [
+        "const fs = require('node:fs');",
+        'const action = ' + JSON.stringify(action) + ';',
+        "if ((process.argv[2] === 'native' && process.argv[3] === action) || (action === 'exec' && process.argv[3] === 'exec')) {",
+        '  fs.writeFileSync(' + JSON.stringify(pidFile) + ', String(process.pid));',
+        '  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);',
+        '}',
+      ].join('\n'));
+      runner = spawn(process.execPath, [path.join(repo, 'scripts/compatibility.mjs'), '--checkout', 'candidate=' + checkout, '--checkout', 'later=' + checkout, '--deploy', '--gateway', 'nemoclaw', '--json', report], {
+        env: {
+          ...process.env, PATH: tools + ':' + process.env.PATH, NEMOCLAW_GATEWAY_PORT: '8080',
+          NODE_OPTIONS: (process.env.NODE_OPTIONS ?? '') + ' --require=' + preload,
+          NHA_HANG_TOOL: phase === 'gateway' ? 'gateway select' : phase === 'preflight' ? 'sandbox get' : '',
+          NHA_HANG_NPM_ARGS: {
+            'root-install': 'ci --ignore-scripts --no-audit --no-fund',
+            'cli-install': '--prefix nemoclaw ci --ignore-scripts --no-audit --no-fund',
+            'cli-build': 'run build:cli',
+          }[phase] ?? '',
+          NHA_TOOL_PID_FILE: pidFile, NHA_CREATED_MARKER: created, NHA_CALL_LOG: calls, NHA_DELETE_LOG: deleted,
+        },
+        stdio: 'ignore',
+      });
+      blockedPid = Number(await waitForFile(pidFile));
+      const progress = JSON.parse(await readFile(report, 'utf8'));
+      assert.equal(progress.status, 'running');
+      assert.equal(progress.cases[0].activeStage, phase);
+      assert.equal(progress.cases[0].stages[phase].status, 'running');
+      const exited = once(runner, 'exit');
+      runner.kill('SIGTERM');
+      const [code] = await Promise.race([
+        exited,
+        new Promise((_resolve, reject) => { exitTimer = setTimeout(() => reject(new Error(phase + ' interruption did not settle')), 5000); }),
+      ]);
+      assert.equal(code, 143);
+      const parsed = JSON.parse(await readFile(report, 'utf8'));
+      assert.equal(parsed.status, 'interrupted');
+      assert.equal(parsed.cases.length, 1);
+      assert.equal(parsed.cases[0].stages[phase].errorCode, 'INTERRUPTED');
+      if (phase === 'exec') {
+        assert.equal(parsed.cases[0].stages.cleanup.status, 'passed');
+        assert.equal((await readFile(deleted, 'utf8')).trim(), parsed.cases[0].sandbox.name);
+      } else {
+        assert.equal(parsed.cases[0].sandbox.ownership, 'unknown');
+        assert.equal(parsed.cases[0].stages.cleanup.status, 'skipped');
+        await assert.rejects(readFile(created, 'utf8'), { code: 'ENOENT' });
+        await assert.rejects(readFile(deleted, 'utf8'), { code: 'ENOENT' });
+      }
+    } finally {
+      clearTimeout(exitTimer);
+      if (runner && runner.exitCode === null) runner.kill('SIGKILL');
+      if (blockedPid) { try { process.kill(-blockedPid, 'SIGKILL'); } catch {} }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test('signals during cleanup let the owned deletion finish exactly once', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nha-compat-cleanup-interrupt-'));
+  const checkout = path.join(root, 'NemoClaw');
+  const report = path.join(root, 'report.json');
+  const deletePid = path.join(root, 'delete.pid');
+  const deleted = path.join(root, 'deleted.log');
+  let runner;
+  try {
+    await fakeCheckout(checkout);
+    const tools = await fakeTooling(root);
+    runner = spawn(process.execPath, [path.join(repo, 'scripts/compatibility.mjs'), '--checkout', 'candidate=' + checkout, '--deploy', '--gateway', 'nemoclaw', '--json', report], {
+      env: { ...process.env, PATH: tools + ':' + process.env.PATH, NEMOCLAW_GATEWAY_PORT: '8080', NHA_CREATED_MARKER: path.join(root, 'created'), NHA_DELETE_PID_FILE: deletePid, NHA_DELETE_LOG: deleted },
+      stdio: 'ignore',
+    });
+    await waitForFile(deletePid);
+    assert.equal(JSON.parse(await readFile(report, 'utf8')).cases[0].stages.cleanup.status, 'running');
+    const exited = once(runner, 'exit');
+    runner.kill('SIGTERM');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    runner.kill('SIGINT');
+    const [code] = await exited;
+    assert.equal(code, 143);
+    const parsed = JSON.parse(await readFile(report, 'utf8'));
+    assert.equal(parsed.status, 'interrupted');
+    assert.equal(parsed.cases[0].stages.cleanup.status, 'passed');
+    assert.deepEqual((await readFile(deleted, 'utf8')).trim().split('\n'), [parsed.cases[0].sandbox.name]);
+  } finally {
+    if (runner && runner.exitCode === null) runner.kill('SIGKILL');
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('evidence write failure cannot skip deletion of an owned sandbox', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nha-compat-report-failure-'));
+  try {
+    const checkout = path.join(root, 'NemoClaw');
+    await fakeCheckout(checkout);
+    const tools = await fakeTooling(root);
+    const report = path.join(root, 'report.json');
+    const deleted = path.join(root, 'deleted.log');
+    const result = runCompatibility(['--checkout', 'candidate=' + checkout, '--deploy', '--gateway', 'nemoclaw', '--json', report], {
+      PATH: tools + ':' + process.env.PATH, NEMOCLAW_GATEWAY_PORT: '8080', NHA_CREATED_MARKER: path.join(root, 'created'), NHA_DELETE_LOG: deleted, NHA_REPORT_FAIL_AFTER_EXEC: report,
+    });
+    assert.equal(result.status, 1);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.status, 'failed');
+    assert.equal(parsed.error.errorCode, 'EISDIR');
+    assert.equal(parsed.cases[0].stages.cleanup.status, 'passed');
+    assert.equal((await readFile(deleted, 'utf8')).trim(), parsed.cases[0].sandbox.name);
+    assert.equal(JSON.parse(await readFile(report + '.saved', 'utf8')).cases[0].sandbox.ownership, 'owned');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('deployment without --json still saves a durable ownership report', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nha-compat-default-report-'));
+  try {
+    const checkout = path.join(root, 'NemoClaw');
+    await fakeCheckout(checkout);
+    const tools = await fakeTooling(root);
+    const result = spawnSync(process.execPath, [path.join(repo, 'scripts/compatibility.mjs'), '--checkout', 'candidate=' + checkout, '--deploy', '--gateway', 'nemoclaw'], {
+      cwd: root, encoding: 'utf8', env: { ...process.env, PATH: tools + ':' + process.env.PATH, NEMOCLAW_GATEWAY_PORT: '8080', NHA_CREATED_MARKER: path.join(root, 'created') },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(path.dirname(parsed.reportPath), path.join(root, 'reports'));
+    const receipt = JSON.parse(await readFile(parsed.reportPath, 'utf8'));
+    assert.equal(receipt.status, 'passed');
+    assert.equal(receipt.cases[0].sandbox.ownership, 'owned');
+    assert.equal(receipt.cases[0].stages.cleanup.status, 'passed');
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test('a sandbox that onboarding did not create on the bound gateway fails the case', async () => {

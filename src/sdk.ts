@@ -207,7 +207,9 @@ function isChatMessage(value: unknown): value is ChatMessage {
 function isChatUsage(value: unknown): value is ChatUsage {
   if (!record(value)) return false;
   return ['prompt_tokens', 'completion_tokens', 'total_tokens'].every((key) =>
-    value[key] === undefined || (typeof value[key] === 'number' && Number.isFinite(value[key])));
+    value[key] === undefined || (typeof value[key] === 'number' && Number.isFinite(value[key])))
+    && ['prompt_tokens_details', 'completion_tokens_details'].every((key) =>
+      value[key] === undefined || record(value[key]));
 }
 
 /** Validate the declared response contract while retaining opaque content and extension fields. */

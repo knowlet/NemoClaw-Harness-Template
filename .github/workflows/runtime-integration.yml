@@ -44,31 +44,86 @@ jobs:
         run: |
           mkdir -p reports
           node scripts/integration/native-agent.mjs --nemoclaw .upstream/NemoClaw --name native-echo --json reports/native-loader.json
-      - name: Install OpenShell v0.0.116 and verify checksum
+      - name: Install the pinned OpenShell CLI, gateway, and sandbox runtime
         id: openshell
+        env:
+          NEMOCLAW_NON_INTERACTIVE: '1'
         run: |
-          mkdir -p "$RUNNER_TEMP/openshell" "$HOME/.local/bin" reports
-          cd "$RUNNER_TEMP/openshell"
-          base=https://github.com/NVIDIA/OpenShell/releases/download/v0.0.116
-          curl -fsSLO "$base/openshell-x86_64-unknown-linux-musl.tar.gz"
-          curl -fsSLO "$base/openshell-checksums-sha256.txt"
-          grep ' openshell-x86_64-unknown-linux-musl.tar.gz$' openshell-checksums-sha256.txt | sha256sum --check --strict
-          tar -xzf openshell-x86_64-unknown-linux-musl.tar.gz
-          install -m 0755 "$(find . -type f -name openshell | head -1)" "$HOME/.local/bin/openshell"
+          mkdir -p "$HOME/.local/bin" reports
+          export PATH="$HOME/.local/bin:$PATH"
+          bash .upstream/NemoClaw/scripts/install-openshell.sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          "$HOME/.local/bin/openshell" --version
-      - name: Actual NemoClaw onboarding with fixture provider
-        id: onboard
+          openshell --version
+          openshell_dir="$(dirname "$(command -v openshell)")"
+          test -x "$openshell_dir/openshell-gateway"
+          test -x "$openshell_dir/openshell-sandbox"
+      - name: Bootstrap and verify the managed gateway
+        id: gateway
+        if: ${{ !cancelled() && steps.cli.outcome == 'success' && steps.openshell.outcome == 'success' }}
         continue-on-error: true
         env:
+          NEMOCLAW_GATEWAY_PORT: '8080'
+          NEMOCLAW_NON_INTERACTIVE: '1'
+        run: |
+          mkdir -p reports
+          node --input-type=module <<'NODE'
+          import { run, commandResult, gatewayStatusIsConnected, serializeReport, writeReportAtomically } from './scripts/lib/qualification.mjs';
+          const report = { gateway: 'nemoclaw', stages: {} };
+          const bootstrap = `
+            const onboard = require('./dist/lib/onboard.js');
+            if (typeof onboard.startDockerDriverGateway !== 'function') throw new Error('Pinned gateway bootstrap is unavailable');
+            Promise.resolve(onboard.startDockerDriverGateway({ exitOnFailure: false }))
+              .then(() => process.exit(0)).catch(error => { console.error(error); process.exit(1); });
+          `;
+          async function check(key, argv, options = {}) {
+            const result = await run(argv, { timeoutMs: 60000, ...options });
+            report.stages[key] = commandResult(result);
+            if (key === 'status' && report.stages[key].status === 'passed' && !gatewayStatusIsConnected(result.stdout)) {
+              report.stages[key] = { ...report.stages[key], status: 'failed', errorCode: 'GATEWAY_UNHEALTHY' };
+            }
+            await writeReportAtomically('reports/gateway.json', report);
+            if (report.stages[key].status !== 'passed') throw new Error(key + ' failed');
+          }
+          try {
+            await check('bootstrap', [process.execPath, '--input-type=commonjs', '-e', bootstrap], { cwd: '.upstream/NemoClaw', timeoutMs: 300000 });
+            await check('select', ['openshell', 'gateway', 'select', 'nemoclaw']);
+            await check('status', ['openshell', 'status', '-g', 'nemoclaw']);
+          } catch { process.exitCode = 1; }
+          console.log(serializeReport(report));
+          NODE
+      - name: Start and verify the deterministic provider fixture
+        id: fixture
+        if: ${{ !cancelled() && steps.gateway.outcome == 'success' }}
+        continue-on-error: true
+        run: |
+          node scripts/integration/fixture-provider.mjs > "$RUNNER_TEMP/provider.log" 2>&1 &
+          fixture_pid=$!
+          echo "$fixture_pid" > "$RUNNER_TEMP/provider.pid"
+          trap 'kill "$fixture_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if ! kill -0 "$fixture_pid" 2>/dev/null; then
+              cat "$RUNNER_TEMP/provider.log"
+              exit 1
+            fi
+            if grep -Fq 'Deterministic integration fixture listening; NOT a real model.' "$RUNNER_TEMP/provider.log" && curl --connect-timeout 1 --max-time 2 --fail --silent http://127.0.0.1:18080/v1/models >/dev/null; then
+              trap - EXIT
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/provider.log"
+          exit 1
+      - name: Actual NemoClaw onboarding with fixture provider
+        id: onboard
+        if: ${{ !cancelled() && steps.gateway.outcome == 'success' && steps.fixture.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          NEMOCLAW_GATEWAY_PORT: '8080'
           NEMOCLAW_PROVIDER: custom
           NEMOCLAW_MODEL: fixture-model
           NEMOCLAW_PROVIDER_KEY: fixture-only-not-a-secret
           NEMOCLAW_ENDPOINT_URL: http://host.openshell.internal:18080/v1
         run: |
-          node scripts/integration/fixture-provider.mjs > "$RUNNER_TEMP/provider.log" 2>&1 &
-          echo $! > "$RUNNER_TEMP/provider.pid"
-          curl --retry 10 --retry-connrefused --retry-delay 1 --fail http://127.0.0.1:18080/v1/models
           set +e
           timeout 900 node .upstream/NemoClaw/bin/nemoclaw.js onboard --name nha-host --agent openclaw --no-gpu --no-sandbox-gpu --non-interactive --yes --yes-i-accept-third-party-software > "$RUNNER_TEMP/onboard.log" 2>&1
           rc=$?
@@ -81,9 +136,10 @@ jobs:
           exit "$rc"
       - name: Onboard and execute the generated native agent in a real sandbox
         id: native
-        if: ${{ !cancelled() && steps.openshell.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.native-loader.outcome == 'success' && steps.gateway.outcome == 'success' && steps.fixture.outcome == 'success' }}
         continue-on-error: true
         env:
+          NEMOCLAW_GATEWAY_PORT: '8080'
           NEMOCLAW_PROVIDER: custom
           NEMOCLAW_MODEL: fixture-model
           NEMOCLAW_PROVIDER_KEY: fixture-only-not-a-secret
@@ -93,7 +149,7 @@ jobs:
           node scripts/integration/native-agent.mjs --nemoclaw .upstream/NemoClaw --name native-echo --sandbox nha-native --deploy --json reports/native.json
       - name: Build generated adapter and test real OpenShell BYOC
         id: byoc
-        if: ${{ !cancelled() && steps.openshell.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.gateway.outcome == 'success' && steps.fixture.outcome == 'success' }}
         continue-on-error: true
         run: |
           set -o pipefail
@@ -121,7 +177,7 @@ jobs:
           openshell sandbox exec -n nha-integration -- node /opt/nha/integration-smoke.mjs byoc | tee reports/byoc.json
       - name: Run harness suite inside the actual NemoClaw-managed sandbox
         id: embedded
-        if: ${{ !cancelled() && steps.openshell.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.onboard.outcome == 'success' && steps.byoc.outcome == 'success' }}
         continue-on-error: true
         run: |
           set -o pipefail
@@ -130,23 +186,115 @@ jobs:
           node .upstream/NemoClaw/bin/nemoclaw.js nha-host upload "$RUNNER_TEMP/harness.tar" /sandbox/harness.tar
           node .upstream/NemoClaw/bin/nemoclaw.js nha-host exec -- tar -xf /sandbox/harness.tar -C /sandbox
           node .upstream/NemoClaw/bin/nemoclaw.js nha-host exec -- node /sandbox/harness/integration-smoke.mjs embedded | tee reports/nemoclaw.json
+      - name: Cleanup disposable sandboxes
+        id: cleanup
+        if: always()
+        continue-on-error: true
+        env:
+          OPENSHELL_RESULT: ${{ steps.openshell.outcome }}
+          ONBOARD_RESULT: ${{ steps.onboard.outcome }}
+          BYOC_RESULT: ${{ steps.byoc.outcome }}
+        run: |
+          mkdir -p reports
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import { classifyDestroyResult, classifySandboxPreflightResult } from './scripts/lib/sandbox-cleanup.mjs';
+          import { run, cleanupSandbox, commandResult, serializeReport, writeReportAtomically } from './scripts/lib/qualification.mjs';
+          const results = [];
+          async function destroy(sandbox, gateway) {
+            const argv = ['openshell', 'sandbox', 'delete', ...(gateway ? ['-g', gateway.name] : []), sandbox];
+            const result = await run(argv, {
+              timeoutMs: 60000,
+              env: gateway ? { ...process.env, OPENSHELL_WORKSPACE: gateway.workspace } : process.env,
+            });
+            const verdict = classifyDestroyResult({ ...result, sandbox });
+            const ok = !result.errorCode && !result.timedOut && !result.signal && !result.cancelled && !result.stdoutTruncated && !result.stderrTruncated && verdict.ok;
+            results.push({ ...commandResult(result), resource: sandbox, gateway,
+              status: ok ? 'passed' : 'failed', absent: ok && verdict.absent, detail: verdict.detail });
+          }
+          async function destroyNative(sandbox, gateway) {
+            const env = { ...process.env, NEMOCLAW_GATEWAY_PORT: String(gateway.port), OPENSHELL_WORKSPACE: gateway.workspace };
+            const result = await run([process.execPath, '.upstream/NemoClaw/bin/nemoclaw.js', sandbox, 'destroy', '--yes', '--no-cleanup-gateway'], { env, timeoutMs: 60000 });
+            const cleanup = commandResult(result);
+            if (cleanup.status === 'passed') {
+              const probe = await run(['openshell', 'sandbox', 'get', '-g', gateway.name, sandbox], { env, timeoutMs: 10000 });
+              const absent = classifySandboxPreflightResult({ ...probe, sandbox });
+              cleanup.verification = commandResult(probe);
+              cleanup.absent = absent.ok && !probe.errorCode && !probe.timedOut && !probe.signal && !probe.cancelled && !probe.stdoutTruncated && !probe.stderrTruncated;
+              if (!cleanup.absent) cleanup.status = 'failed';
+            }
+            results.push({ ...cleanup, resource: sandbox, gateway });
+          }
+          if (process.env.OPENSHELL_RESULT === 'success') {
+            const gateway = { name: 'nemoclaw', port: 8080, workspace: process.env.OPENSHELL_WORKSPACE || 'default' };
+            for (const [sandbox, outcome] of [['nha-integration', process.env.BYOC_RESULT], ['nha-host', process.env.ONBOARD_RESULT]]) {
+              if (['success', 'failure'].includes(outcome)) {
+                if (sandbox === 'nha-host') await destroyNative(sandbox, gateway);
+                else await destroy(sandbox, gateway);
+              }
+              else results.push({ resource: sandbox, status: 'skipped', detail: 'Deployment step did not run' });
+            }
+          } else {
+            results.push({ resource: 'legacy sandboxes', status: 'skipped', detail: 'OpenShell installation did not complete' });
+          }
+          if (fs.existsSync('reports/native.json')) {
+            try {
+              const receipt = JSON.parse(fs.readFileSync('reports/native.json', 'utf8'));
+              if (receipt.sandboxResource?.ownership === 'owned' && receipt.stages?.cleanup?.status !== 'passed') {
+                if (!receipt.sandboxResource.name || !receipt.checkout || !receipt.gateway?.name || !receipt.gateway.port || !receipt.gateway.workspace || receipt.nativeState?.ownership !== 'owned') {
+                  throw new Error('Native cleanup receipt is missing native ownership or gateway binding');
+                }
+                const native = { ...receipt, sandbox: receipt.sandboxResource };
+                if (native.stages?.cleanup?.status === 'running') native.stages.cleanup = { status: 'failed', reason: 'prior workflow step has ended' };
+                await cleanupSandbox(native, { deploy: true, gateway: receipt.gateway.name, gatewayPort: receipt.gateway.port });
+                results.push({ ...native.stages.cleanup, resource: receipt.sandboxResource.name, gateway: receipt.gateway });
+              } else {
+                results.push({ resource: 'native sandbox', status: 'skipped', detail: 'No owned sandbox remains to clean up' });
+              }
+            } catch (error) {
+              results.push({ resource: 'native sandbox', status: 'failed', detail: error.message });
+            }
+          } else {
+            results.push({ resource: 'native sandbox', status: 'skipped', detail: 'No ownership receipt' });
+          }
+          const pidFile = path.join(process.env.RUNNER_TEMP, 'provider.pid');
+          if (fs.existsSync(pidFile)) {
+            try {
+              const pid = Number(fs.readFileSync(pidFile, 'utf8').trim());
+              if (!Number.isSafeInteger(pid) || pid <= 1) throw new Error('Invalid fixture provider PID');
+              process.kill(pid, 'SIGTERM');
+              results.push({ resource: 'fixture provider', status: 'passed' });
+            } catch (error) {
+              results.push({ resource: 'fixture provider', status: error.code === 'ESRCH' ? 'passed' : 'failed', detail: error.message });
+            }
+          }
+          const ok = results.every(result => ['passed', 'skipped'].includes(result.status));
+          await writeReportAtomically('reports/cleanup.json', { ok, results });
+          console.log(serializeReport({ ok, results }));
+          process.exitCode = ok ? 0 : 1;
+          NODE
       - name: Record outcomes without hiding deployment failures
         if: always()
         env:
           CLI_RESULT: ${{ steps.cli.outcome }}
+          OPENSHELL_RESULT: ${{ steps.openshell.outcome }}
+          GATEWAY_RESULT: ${{ steps.gateway.outcome }}
+          FIXTURE_RESULT: ${{ steps.fixture.outcome }}
           NATIVE_LOADER_RESULT: ${{ steps.native-loader.outcome }}
           ONBOARD_RESULT: ${{ steps.onboard.outcome }}
           NATIVE_RESULT: ${{ steps.native.outcome }}
           BYOC_RESULT: ${{ steps.byoc.outcome }}
           EMBEDDED_RESULT: ${{ steps.embedded.outcome }}
+          CLEANUP_RESULT: ${{ steps.cleanup.outcome }}
         run: |
           mkdir -p reports
           node --input-type=module -e '
-            import fs from "node:fs";
-            const results = Object.fromEntries(["CLI", "NATIVE_LOADER", "ONBOARD", "NATIVE", "BYOC", "EMBEDDED"].map(k => [k.toLowerCase(), process.env[k + "_RESULT"]]));
+            import { serializeReport, writeReportAtomically } from "./scripts/lib/qualification.mjs";
+            const results = Object.fromEntries(["CLI", "OPENSHELL", "GATEWAY", "FIXTURE", "NATIVE_LOADER", "ONBOARD", "NATIVE", "BYOC", "EMBEDDED", "CLEANUP"].map(k => [k.toLowerCase(), process.env[k + "_RESULT"]]));
             const report = { unofficial: true, commit: process.env.GITHUB_SHA, nemoclawCommit: "1eb370f20530bd1312ac86a27782ef8501b28ade", openshell: "0.0.116", arch: process.arch, realModel: false, results };
-            fs.writeFileSync("reports/deployment.json", JSON.stringify(report, null, 2) + "\n");
-            console.log(JSON.stringify(report));
+            await writeReportAtomically("reports/deployment.json", report);
+            console.log(serializeReport(report));
           '
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
@@ -154,22 +302,17 @@ jobs:
           name: runtime-evidence
           path: reports/
           retention-days: 14
-      - name: Cleanup disposable sandboxes
-        if: always()
-        run: |
-          if command -v openshell >/dev/null; then
-            openshell sandbox list || true
-            openshell sandbox delete nha-integration || true
-            openshell sandbox delete nha-native || true
-          openshell sandbox delete nha-host || true
-          fi
-          if test -f "$RUNNER_TEMP/provider.pid"; then kill "$(cat "$RUNNER_TEMP/provider.pid")" || true; fi
-      - name: Require all deployment checks to pass
+      - name: Require all deployment checks and cleanup to pass
         if: always()
         env:
+          CLI_RESULT: ${{ steps.cli.outcome }}
+          OPENSHELL_RESULT: ${{ steps.openshell.outcome }}
+          GATEWAY_RESULT: ${{ steps.gateway.outcome }}
+          FIXTURE_RESULT: ${{ steps.fixture.outcome }}
           NATIVE_LOADER_RESULT: ${{ steps.native-loader.outcome }}
           ONBOARD_RESULT: ${{ steps.onboard.outcome }}
           NATIVE_RESULT: ${{ steps.native.outcome }}
           BYOC_RESULT: ${{ steps.byoc.outcome }}
           EMBEDDED_RESULT: ${{ steps.embedded.outcome }}
-        run: test "$NATIVE_LOADER_RESULT/$ONBOARD_RESULT/$NATIVE_RESULT/$BYOC_RESULT/$EMBEDDED_RESULT" = success/success/success/success/success
+          CLEANUP_RESULT: ${{ steps.cleanup.outcome }}
+        run: test "$CLI_RESULT/$OPENSHELL_RESULT/$GATEWAY_RESULT/$FIXTURE_RESULT/$NATIVE_LOADER_RESULT/$ONBOARD_RESULT/$NATIVE_RESULT/$BYOC_RESULT/$EMBEDDED_RESULT/$CLEANUP_RESULT" = success/success/success/success/success/success/success/success/success/success
