@@ -48,8 +48,10 @@ if (sandbox === process.env.SIGNAL_SANDBOX) process.kill(process.pid, 'SIGTERM')
       const checkout = path.join(dir, folder);
       await mkdir(path.join(checkout, 'bin'), { recursive: true });
       await mkdir(path.join(checkout, 'dist/lib/state/registry'), { recursive: true });
+      await mkdir(path.join(checkout, 'dist/lib/state/onboard-session'), { recursive: true });
       await writeFile(path.join(checkout, 'dist/lib/state/registry/persistence.js'), 'exports.REGISTRY_FILE = ' + JSON.stringify(path.join(dir, 'absent-registry.json')) + ';');
-      await writeFile(path.join(checkout, 'dist/lib/state/onboard-session.js'), 'exports.SESSION_FILE = ' + JSON.stringify(path.join(dir, 'absent-session.json')) + '; exports.RETAINED_SANDBOX_RECOVERY_FILE = ' + JSON.stringify(path.join(dir, 'absent-recovery.json')) + ';');
+      await writeFile(path.join(checkout, 'dist/lib/state/onboard-session.js'), 'exports.SESSION_FILE = ' + JSON.stringify(path.join(dir, 'absent-session.json')) + '; exports.SESSION_DIR = require("node:path").dirname(exports.SESSION_FILE); exports.RETAINED_SANDBOX_RECOVERY_FILE = ' + JSON.stringify(path.join(dir, 'absent-recovery.json')) + ';');
+      await writeFile(path.join(checkout, 'dist/lib/state/onboard-session/retained-sandbox-recovery.js'), "exports.retainedRebuildSessionFileName = (name) => '.onboard-rebuild-' + name + '.json';\n");
       await writeFile(path.join(checkout, 'bin/nemoclaw.js'), `
 const fs = require('node:fs');
 const argv = process.argv.slice(2), sandbox = argv[0] === 'sandbox' ? argv[2] : argv[0];

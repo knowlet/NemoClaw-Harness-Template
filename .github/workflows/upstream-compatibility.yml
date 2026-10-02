@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: NVIDIA/NemoClaw
-          ref: 1eb370f20530bd1312ac86a27782ef8501b28ade
+          ref: 1ccec4e141b0a830229ef68c96639851d24810fd
           path: .upstream/NemoClaw-pinned
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -124,7 +124,7 @@ jobs:
           node scripts/compatibility.mjs \
             --checkout pinned=.upstream/NemoClaw-pinned \
             --checkout candidate=.upstream/NemoClaw-main \
-            --expected pinned=1eb370f20530bd1312ac86a27782ef8501b28ade \
+            --expected pinned=1ccec4e141b0a830229ef68c96639851d24810fd \
             --build \
             --deploy \
             --gateway nemoclaw \

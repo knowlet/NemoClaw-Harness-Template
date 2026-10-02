@@ -17,7 +17,7 @@ no plugin API and no runtime registration call.
 This layout is **internal to a pinned upstream revision**, not a public extension point. Native
 packaging therefore records the revision it targets:
 
-    NVIDIA/NemoClaw@1eb370f20530bd1312ac86a27782ef8501b28ade
+    NVIDIA/NemoClaw@1ccec4e141b0a830229ef68c96639851d24810fd
 
 The SDK reads the checkout Git `HEAD` before install or verify and requires this exact revision. Other revisions may rename, add, or reject fields; use the explicit compatibility qualification path before changing the pin.
 

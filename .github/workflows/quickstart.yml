@@ -45,7 +45,7 @@ jobs:
         run: |
           {
             echo "commit: $GITHUB_SHA"
-            echo "nemoclawRevision: 1eb370f20530bd1312ac86a27782ef8501b28ade"
+            echo "nemoclawRevision: 1ccec4e141b0a830229ef68c96639851d24810fd"
             echo "arch: $(uname -m)"
             echo "node: $(node --version)"
             echo "docker: $(docker --version)"

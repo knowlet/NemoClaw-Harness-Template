@@ -20,12 +20,13 @@ async function fixture(t, overrides = {}) {
   const checkout = path.join(root, 'NemoClaw'), workdir = path.join(root, 'work');
   const tooling = path.join(root, 'tools'), fixtureHome = path.join(root, 'home');
   const openshellDir = path.join(fixtureHome, '.local/bin');
-  for (const dir of ['agents', 'bin', 'scripts', 'dist/lib/agent', 'dist/lib/onboard/workload', 'dist/lib/state/registry']) await mkdir(path.join(checkout, dir), { recursive: true });
+  for (const dir of ['agents', 'bin', 'scripts', 'dist/lib/agent', 'dist/lib/onboard/workload', 'dist/lib/state/registry', 'dist/lib/state/onboard-session']) await mkdir(path.join(checkout, dir), { recursive: true });
   await mkdir(tooling); await mkdir(openshellDir, { recursive: true });
   const stateDir = path.join(root, 'native-state'); await mkdir(stateDir);
   const registry = path.join(stateDir, 'registry.json'), session = path.join(stateDir, 'session.json'), retained = path.join(stateDir, 'retained.json');
   await writeFile(path.join(checkout, 'dist/lib/state/registry/persistence.js'), 'exports.REGISTRY_FILE = ' + JSON.stringify(registry) + ';\n');
-  await writeFile(path.join(checkout, 'dist/lib/state/onboard-session.js'), 'exports.SESSION_FILE = ' + JSON.stringify(session) + '; exports.RETAINED_SANDBOX_RECOVERY_FILE = ' + JSON.stringify(retained) + ';\n');
+  await writeFile(path.join(checkout, 'dist/lib/state/onboard-session.js'), 'exports.SESSION_FILE = ' + JSON.stringify(session) + '; exports.SESSION_DIR = require("node:path").dirname(exports.SESSION_FILE); exports.RETAINED_SANDBOX_RECOVERY_FILE = ' + JSON.stringify(retained) + ';\n');
+  await writeFile(path.join(checkout, 'dist/lib/state/onboard-session/retained-sandbox-recovery.js'), "exports.retainedRebuildSessionFileName = (name) => '.onboard-rebuild-' + name + '.json';\n");
   await writeFile(path.join(checkout, 'package.json'), JSON.stringify({ name: 'nemoclaw', type: 'commonjs' }));
   await writeFile(path.join(checkout, 'dist/lib/agent/defs.js'), [
     "const path = require('node:path');",

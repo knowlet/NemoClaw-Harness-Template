@@ -494,6 +494,16 @@ const read = (target) => {
 try {
   const registryPaths = require(path.join(checkout, 'dist/lib/state/registry/persistence.js'));
   const sessionPaths = require(path.join(checkout, 'dist/lib/state/onboard-session.js'));
+  const recoveryPaths = require(path.join(checkout, 'dist/lib/state/onboard-session/retained-sandbox-recovery.js'));
+  if (typeof sessionPaths.SESSION_DIR !== 'string' || !path.isAbsolute(sessionPaths.SESSION_DIR) || typeof sessionPaths.SESSION_FILE !== 'string' || path.dirname(sessionPaths.SESSION_FILE) !== sessionPaths.SESSION_DIR || typeof recoveryPaths.retainedRebuildSessionFileName !== 'function') fail('NATIVE_STATE_UNSUPPORTED');
+  const rebuildName = recoveryPaths.retainedRebuildSessionFileName(sandbox);
+  if (typeof rebuildName !== 'string' || !rebuildName || rebuildName === '.' || rebuildName === '..' || path.basename(rebuildName) !== rebuildName) fail('NATIVE_STATE_UNSUPPORTED');
+  let rebuild = false;
+  try {
+    // Any retained target file is prior authority, regardless of its contents.
+    if (!fs.lstatSync(path.join(sessionPaths.SESSION_DIR, rebuildName)).isFile()) fail('NATIVE_STATE_INVALID');
+    rebuild = true;
+  } catch (error) { if (error.code !== 'ENOENT') throw error; }
   const registry = read(registryPaths.REGISTRY_FILE);
   const session = read(sessionPaths.SESSION_FILE);
   const recovery = read(sessionPaths.RETAINED_SANDBOX_RECOVERY_FILE);
@@ -509,7 +519,7 @@ try {
   const sessionProtected = Boolean(session && !unrelatedRecoveryPreserved && (session.cancellationRecovery || session.status === 'recovery_required' || (session.status !== 'complete' && session.resumable !== false)));
   console.log(JSON.stringify({ schemaVersion: 1, ok: true,
     registered: Boolean(registry && (Object.hasOwn(registry.sandboxes, sandbox) || registry.defaultSandbox === sandbox)),
-    retained: retained.some((item) => item.sandboxName === sandbox), session: sessionProtected,
+    retained: retained.some((item) => item.sandboxName === sandbox), session: sessionProtected, rebuild,
   }));
 } catch (error) {
   const known = ['NATIVE_STATE_UNSUPPORTED', 'NATIVE_STATE_INVALID', 'NATIVE_STATE_OUTPUT_LIMIT'];
@@ -537,13 +547,13 @@ export async function probeNativeState(result, flags, { runCommand = run, env = 
     if (!outcome.timedOut && !outcome.signal && !outcome.errorCode && !outcome.cancelled && !outcome.stdoutTruncated) {
       try { projection = JSON.parse(outcome.stdout); } catch {}
     }
-    if (outcome.code !== 0 || projection?.schemaVersion !== 1 || projection?.ok !== true || !['registered', 'retained', 'session'].every((key) => typeof projection[key] === 'boolean')) {
+    if (outcome.code !== 0 || projection?.schemaVersion !== 1 || projection?.ok !== true || !['registered', 'retained', 'session', 'rebuild'].every((key) => typeof projection[key] === 'boolean')) {
       return { ...receipt, status: 'blocked', category: 'infrastructure', errorCode: outcome.timedOut ? 'TIMEOUT' : outcome.errorCode ?? projection?.errorCode ?? 'NATIVE_STATE_UNVERIFIED', durationMs: outcome.durationMs };
     }
-    const occupied = projection.registered || projection.retained || projection.session;
+    const occupied = projection.registered || projection.retained || projection.session || projection.rebuild;
     return {
       ...receipt, status: occupied ? 'failed' : 'passed', ownership: occupied ? 'pre-existing' : 'available',
-      registered: projection.registered, retained: projection.retained, session: projection.session,
+      registered: projection.registered, retained: projection.retained, session: projection.session, rebuild: projection.rebuild,
       ...(occupied ? { category: 'infrastructure', errorCode: 'NATIVE_STATE_EXISTS' } : {}), durationMs: outcome.durationMs,
     };
   } catch {
@@ -575,6 +585,8 @@ async function cleanupNativeSandbox(result, flags, runCommand, env) {
   }
   // A retained-resource refusal must survive intact. Never fall back to raw
   // mutable-name deletion, --force, or manual registry/recovery-file removal.
+  // The native namespace reaches retained-only recovery without the public
+  // name-first route's registry recovery gate. Both invoke upstream destroy.
   const deletion = await boundedRun([process.execPath, path.join(result.checkout, 'bin', 'nemoclaw.js'), 'sandbox', 'destroy', sandbox, '--yes', '--no-cleanup-gateway'], {
     cwd: result.checkout, env: boundEnv, timeoutMs: Math.min(flags.timeoutMs ?? 120000, 120000),
   });

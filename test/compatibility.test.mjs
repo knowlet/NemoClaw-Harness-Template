@@ -23,8 +23,10 @@ async function fakeCheckout(root) {
   await mkdir(path.join(root, 'dist/lib/agent'), { recursive: true });
   await mkdir(path.join(root, 'dist/lib/onboard/workload'), { recursive: true });
   await mkdir(path.join(root, 'dist/lib/state/registry'), { recursive: true });
+  await mkdir(path.join(root, 'dist/lib/state/onboard-session'), { recursive: true });
   await writeFile(path.join(root, 'dist/lib/state/registry/persistence.js'), 'exports.REGISTRY_FILE = ' + JSON.stringify(path.join(root, '.fixture-registry.json')) + ';\n');
-  await writeFile(path.join(root, 'dist/lib/state/onboard-session.js'), 'exports.SESSION_FILE = ' + JSON.stringify(path.join(root, '.fixture-session.json')) + '; exports.RETAINED_SANDBOX_RECOVERY_FILE = ' + JSON.stringify(path.join(root, '.fixture-retained.json')) + ';\n');
+  await writeFile(path.join(root, 'dist/lib/state/onboard-session.js'), 'exports.SESSION_FILE = ' + JSON.stringify(path.join(root, '.fixture-session.json')) + '; exports.SESSION_DIR = require("node:path").dirname(exports.SESSION_FILE); exports.RETAINED_SANDBOX_RECOVERY_FILE = ' + JSON.stringify(path.join(root, '.fixture-retained.json')) + ';\n');
+  await writeFile(path.join(root, 'dist/lib/state/onboard-session/retained-sandbox-recovery.js'), "exports.retainedRebuildSessionFileName = (name) => '.onboard-rebuild-' + name + '.json';\n");
   await writeFile(path.join(root, 'package.json'), JSON.stringify({ name: 'nemoclaw', version: 'candidate', type: 'commonjs' }) + '\n');
   await writeFile(path.join(root, 'dist/lib/agent/defs.js'), [
     "const path = require('node:path');",

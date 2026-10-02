@@ -15,7 +15,7 @@ import {
 
 const REPO = fileURLToPath(new URL('../', import.meta.url));
 const SDK_CLI = path.join(REPO, 'bin', 'nha.mjs');
-const REVISION = '1eb370f20530bd1312ac86a27782ef8501b28ade';
+const REVISION = '1ccec4e141b0a830229ef68c96639851d24810fd';
 const NAME = /^[a-z][a-z0-9-]{0,31}$/;
 const SANDBOX = /^[a-z](?:[a-z0-9]|-(?=[a-z0-9])){0,18}$/;
 const USAGE = [

@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: NVIDIA/NemoClaw
-          ref: 1eb370f20530bd1312ac86a27782ef8501b28ade
+          ref: 1ccec4e141b0a830229ef68c96639851d24810fd
           path: .upstream/NemoClaw
           persist-credentials: false
       - name: Build actual NemoClaw CLI from pinned upstream source
@@ -292,7 +292,7 @@ jobs:
           node --input-type=module -e '
             import { serializeReport, writeReportAtomically } from "./scripts/lib/qualification.mjs";
             const results = Object.fromEntries(["CLI", "OPENSHELL", "GATEWAY", "FIXTURE", "NATIVE_LOADER", "ONBOARD", "NATIVE", "BYOC", "EMBEDDED", "CLEANUP"].map(k => [k.toLowerCase(), process.env[k + "_RESULT"]]));
-            const report = { unofficial: true, commit: process.env.GITHUB_SHA, nemoclawCommit: "1eb370f20530bd1312ac86a27782ef8501b28ade", openshell: "0.0.116", arch: process.arch, realModel: false, results };
+            const report = { unofficial: true, commit: process.env.GITHUB_SHA, nemoclawCommit: "1ccec4e141b0a830229ef68c96639851d24810fd", openshell: "0.0.116", arch: process.arch, realModel: false, results };
             await writeReportAtomically("reports/deployment.json", report);
             console.log(serializeReport(report));
           '

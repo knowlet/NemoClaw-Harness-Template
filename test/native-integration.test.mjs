@@ -25,7 +25,7 @@ async function fixture(t, overrides = {}, { deepCheckout = false } = {}) {
   const registry = path.join(root, 'registry.json');
   const retained = path.join(root, 'retained.json');
   const session = path.join(root, 'session.json');
-  for (const dir of ['agents', 'bin', 'dist/lib/agent', 'dist/lib/onboard/workload', 'dist/lib/state/registry']) {
+  for (const dir of ['agents', 'bin', 'dist/lib/agent', 'dist/lib/onboard/workload', 'dist/lib/state/registry', 'dist/lib/state/onboard-session']) {
     await mkdir(path.join(checkout, dir), { recursive: true });
   }
   await mkdir(tooling);
@@ -38,7 +38,8 @@ async function fixture(t, overrides = {}, { deepCheckout = false } = {}) {
   await writeFile(path.join(checkout, 'dist/lib/agent/onboard.js'), "exports.getAgentPolicyPath = (agent) => require('node:path').join(require('node:path').dirname(agent.dockerfilePath), 'policy-additions.yaml');\n");
   await writeFile(path.join(checkout, 'dist/lib/onboard/workload/source.js'), "exports.resolveSandboxWorkloadSource = ({ legacyDockerfilePath }) => ({ kind: 'legacy-dockerfile', dockerfilePath: legacyDockerfilePath, reason: 'fixture' });\n");
   await writeFile(path.join(checkout, 'dist/lib/state/registry/persistence.js'), 'exports.REGISTRY_FILE = ' + JSON.stringify(registry) + ';\n');
-  await writeFile(path.join(checkout, 'dist/lib/state/onboard-session.js'), 'exports.SESSION_FILE = ' + JSON.stringify(session) + ';\nexports.RETAINED_SANDBOX_RECOVERY_FILE = ' + JSON.stringify(retained) + ';\n');
+  await writeFile(path.join(checkout, 'dist/lib/state/onboard-session.js'), 'exports.SESSION_FILE = ' + JSON.stringify(session) + ';\nexports.SESSION_DIR = require("node:path").dirname(exports.SESSION_FILE);\nexports.RETAINED_SANDBOX_RECOVERY_FILE = ' + JSON.stringify(retained) + ';\n');
+  await writeFile(path.join(checkout, 'dist/lib/state/onboard-session/retained-sandbox-recovery.js'), "exports.retainedRebuildSessionFileName = (name) => '.onboard-rebuild-' + name + '.json';\n");
   if (overrides.NHA_NATIVE_TEST_RETAINED) {
     await writeFile(retained, JSON.stringify({ schemaVersion: 1, unresolved: [{ sandboxName: overrides.NHA_NATIVE_TEST_RETAINED }] }));
   }

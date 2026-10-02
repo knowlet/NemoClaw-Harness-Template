@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { watch } from 'node:fs';
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -245,17 +245,65 @@ async function nativeFixture(t) {
   const registry = path.join(root, 'registry.json');
   const session = path.join(root, 'session.json');
   const retained = path.join(root, 'retained.json');
+  const rebuild = path.join(root, '.onboard-rebuild-fixture.json');
   await mkdir(path.join(root, 'dist/lib/state/registry'), { recursive: true });
+  await mkdir(path.join(root, 'dist/lib/state/onboard-session'), { recursive: true });
   await writeFile(path.join(root, 'package.json'), '{"type":"commonjs"}\n');
   await writeFile(path.join(root, 'dist/lib/state/registry/persistence.js'), 'exports.REGISTRY_FILE = ' + JSON.stringify(registry) + ';\n');
-  await writeFile(path.join(root, 'dist/lib/state/onboard-session.js'), 'exports.SESSION_FILE = ' + JSON.stringify(session) + '; exports.RETAINED_SANDBOX_RECOVERY_FILE = ' + JSON.stringify(retained) + ';\n');
+  await writeFile(path.join(root, 'dist/lib/state/onboard-session.js'), 'exports.SESSION_DIR = ' + JSON.stringify(root) + '; exports.SESSION_FILE = ' + JSON.stringify(session) + '; exports.RETAINED_SANDBOX_RECOVERY_FILE = ' + JSON.stringify(retained) + ';\n');
+  await writeFile(path.join(root, 'dist/lib/state/onboard-session/retained-sandbox-recovery.js'), "exports.retainedRebuildSessionFileName = (name) => '.onboard-rebuild-' + name + '.json';\n");
   const flags = { deploy: true, gateway: 'nemoclaw-9090', gatewayPort: 9090, timeoutMs: 5000 };
   const env = { ...process.env, HOME: root, NEMOCLAW_GATEWAY_PORT: '9090', OPENSHELL_WORKSPACE: 'test' };
   const resource = { status: 'passed', checkout: root, gateway: { name: 'nemoclaw-9090', port: 9090, workspace: 'test' }, sandbox: { name: 'fixture', ownership: 'owned' }, stages: {} };
   resource.nativeState = { ...await probeNativeState(resource, flags, { env }), ownership: 'owned' };
   assert.equal(resource.nativeState.status, 'passed');
-  return { root, registry, session, retained, flags, env, resource };
+  return { root, registry, session, retained, rebuild, flags, env, resource };
 }
+
+test('native preflight preserves target rebuild recovery and leaves unrelated files alone', async (t) => {
+  const { root, rebuild, resource, flags, env } = await nativeFixture(t);
+  const unrelated = path.join(root, '.onboard-rebuild-other.json');
+  const contents = '{"version":1,"sandboxName":"fixture","credential":"private-rebuild-value"}\n';
+  await writeFile(unrelated, contents);
+  const absent = await probeNativeState(resource, flags, { env });
+  assert.equal(absent.status, 'passed');
+  assert.equal(absent.rebuild, false);
+  await writeFile(rebuild, contents);
+  const occupied = await probeNativeState(resource, flags, { env });
+  assert.equal(occupied.status, 'failed');
+  assert.equal(occupied.ownership, 'pre-existing');
+  assert.equal(occupied.rebuild, true);
+  assert.equal(JSON.stringify(occupied).includes('private-rebuild-value'), false);
+  assert.equal(await readFile(rebuild, 'utf8'), contents);
+  assert.equal(await readFile(unrelated, 'utf8'), contents);
+});
+
+test('native preflight fails closed on malformed, unreadable, or symlinked rebuild files', async (t) => {
+  const { root, rebuild, resource, flags, env } = await nativeFixture(t);
+  await writeFile(rebuild, '{not-json');
+  assert.equal((await probeNativeState(resource, flags, { env })).ownership, 'pre-existing');
+  await chmod(rebuild, 0);
+  assert.equal((await probeNativeState(resource, flags, { env })).ownership, 'pre-existing');
+  await chmod(rebuild, 0o600);
+  assert.equal(await readFile(rebuild, 'utf8'), '{not-json');
+  await rm(rebuild);
+  await symlink(path.join(root, 'missing-recovery'), rebuild);
+  const linked = await probeNativeState(resource, flags, { env });
+  assert.equal(linked.status, 'blocked');
+  assert.equal(linked.errorCode, 'NATIVE_STATE_INVALID');
+});
+
+test('native preflight rejects unavailable rebuild path contracts', async (t) => {
+  const { root, resource, flags, env } = await nativeFixture(t);
+  const modulePath = path.join(root, 'dist/lib/state/onboard-session/retained-sandbox-recovery.js');
+  for (const source of ['exports.retainedRebuildSessionFileName = null;', "exports.retainedRebuildSessionFileName = () => '../outside.json';"]) {
+    await writeFile(modulePath, source);
+    assert.equal((await probeNativeState(resource, flags, { env })).errorCode, 'NATIVE_STATE_UNSUPPORTED');
+  }
+  await writeFile(modulePath, "exports.retainedRebuildSessionFileName = (name) => '.onboard-rebuild-' + name + '.json';\n");
+  await writeFile(path.join(root, 'dist/lib/state/onboard-session.js'), 'exports.SESSION_FILE = ' + JSON.stringify(path.join(root, 'session.json')) + ';\n');
+  assert.equal((await probeNativeState(resource, flags, { env })).errorCode, 'NATIVE_STATE_UNSUPPORTED');
+});
 
 test('native preflight sees hidden pending and retained state without exposing file contents', async (t) => {
   const fixture = await nativeFixture(t);
