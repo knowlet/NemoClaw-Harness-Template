@@ -164,7 +164,7 @@ loader acceptance is not a deployment. A real deployment — image build, sandbo
 execution inside the sandbox — is recorded by the runtime workflow, not inferred by this command.
 
 Native packaging targets one pinned upstream revision,
-`NVIDIA/NemoClaw@1eb370f20530bd1312ac86a27782ef8501b28ade`, and that `agents/` layout is internal
+`NVIDIA/NemoClaw@1ccec4e141b0a830229ef68c96639851d24810fd`, and that `agents/` layout is internal
 to the revision rather than a public NVIDIA extension API. See the
 [native packaging guide](docs/NATIVE.md).
 

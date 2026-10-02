@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: NVIDIA/NemoClaw
-          ref: 1eb370f20530bd1312ac86a27782ef8501b28ade
+          ref: 1ccec4e141b0a830229ef68c96639851d24810fd
           path: .upstream/NemoClaw-pinned
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -76,7 +76,6 @@ jobs:
             }
             Promise.resolve(onboard.startDockerDriverGateway({
               exitOnFailure: false,
-              skipSandboxBridgeReachability: true,
             })).then(() => process.exit(0)).catch((error) => {
               console.error(error instanceof Error ? error.stack || error.message : String(error));
               process.exit(1);
@@ -87,6 +86,7 @@ jobs:
           openshell gateway info -g nemoclaw 2>&1 | tee -a "$RUNNER_TEMP/compat-gateway-bootstrap.log"
       - name: Start deterministic provider fixture
         id: fixture
+        if: ${{ !cancelled() && steps.gateway.outcome == 'success' }}
         continue-on-error: true
         env:
           HOME: ${{ runner.temp }}/nha-compat-home
@@ -98,15 +98,25 @@ jobs:
         run: |
           mkdir -p "$HOME"
           node scripts/integration/fixture-provider.mjs > "$RUNNER_TEMP/compat-provider.log" 2>&1 &
-          echo $! > "$RUNNER_TEMP/compat-provider.pid"
+          fixture_pid=$!
+          echo "$fixture_pid" > "$RUNNER_TEMP/compat-provider.pid"
+          trap 'kill "$fixture_pid" 2>/dev/null || true' EXIT
           for attempt in $(seq 1 30); do
-            if curl --fail --silent http://127.0.0.1:18080/v1/models >/dev/null; then exit 0; fi
+            if ! kill -0 "$fixture_pid" 2>/dev/null; then
+              cat "$RUNNER_TEMP/compat-provider.log"
+              exit 1
+            fi
+            if grep -Fq 'Deterministic integration fixture listening; NOT a real model.' "$RUNNER_TEMP/compat-provider.log" && curl --connect-timeout 1 --max-time 2 --fail --silent http://127.0.0.1:18080/v1/models >/dev/null; then
+              trap - EXIT
+              exit 0
+            fi
             sleep 1
           done
           cat "$RUNNER_TEMP/compat-provider.log"
           exit 1
       - name: Qualify pinned and candidate checkouts
         id: compatibility
+        if: ${{ !cancelled() && steps.gateway.outcome == 'success' && steps.fixture.outcome == 'success' }}
         continue-on-error: true
         run: |
           mkdir -p "$HOME"
@@ -114,7 +124,7 @@ jobs:
           node scripts/compatibility.mjs \
             --checkout pinned=.upstream/NemoClaw-pinned \
             --checkout candidate=.upstream/NemoClaw-main \
-            --expected pinned=1eb370f20530bd1312ac86a27782ef8501b28ade \
+            --expected pinned=1ccec4e141b0a830229ef68c96639851d24810fd \
             --build \
             --deploy \
             --gateway nemoclaw \
@@ -129,28 +139,53 @@ jobs:
           NEMOCLAW_PROVIDER_KEY: fixture-only-not-a-secret
           NEMOCLAW_ENDPOINT_URL: http://host.openshell.internal:18080/v1
       - name: Cleanup compatibility sandboxes and fixture
+        id: cleanup
         if: always()
+        continue-on-error: true
         env:
+          OPENSHELL_RESULT: ${{ steps.openshell.outcome }}
+          GATEWAY_RESULT: ${{ steps.gateway.outcome }}
           HOME: ${{ runner.temp }}/nha-compat-home
         run: |
           export PATH="$HOME/.local/bin:$PATH"
-          if test -f reports/nemoclaw-compatibility.json; then
-            node --input-type=module -e '
-              import fs from "node:fs";
-              import { execFileSync } from "node:child_process";
-              const report = JSON.parse(fs.readFileSync("reports/nemoclaw-compatibility.json", "utf8"));
-              for (const item of report.cases ?? []) {
-                if (item.sandbox?.ownership !== "owned" || !item.sandbox.name || !item.gateway?.name) continue;
-                if (item.stages?.cleanup?.status === "passed") continue;
-                try { execFileSync("openshell", ["sandbox", "delete", "-g", item.gateway.name, item.sandbox.name], { stdio: "inherit", timeout: 60000 }); }
-                catch { /* qualification reports the original cleanup result */ }
+          mkdir -p reports
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import { cleanupSandbox, run, commandResult, serializeReport, writeReportAtomically } from './scripts/lib/qualification.mjs';
+          const results = [];
+          if (fs.existsSync('reports/nemoclaw-compatibility.json')) {
+            try {
+              const receipt = JSON.parse(fs.readFileSync('reports/nemoclaw-compatibility.json', 'utf8'));
+              for (const item of receipt.cases ?? []) {
+                if (item.sandbox?.ownership !== 'owned' || item.stages?.cleanup?.status === 'passed') continue;
+                if (!item.sandbox.name || !item.checkout || !item.gateway?.name || !item.gateway.port || !item.gateway.workspace || item.nativeState?.ownership !== 'owned') {
+                  results.push({ resource: item.sandbox?.name, status: 'failed', detail: 'Incomplete native ownership receipt' });
+                  continue;
+                }
+                if (item.stages?.cleanup?.status === 'running') item.stages.cleanup = { status: 'failed', reason: 'prior workflow step has ended' };
+                await cleanupSandbox(item, { deploy: true, gateway: item.gateway.name, gatewayPort: item.gateway.port });
+                results.push({ ...item.stages.cleanup, resource: item.sandbox.name });
               }
-            '
-          fi
-          if test -f "$RUNNER_TEMP/compat-provider.pid"; then kill "$(cat "$RUNNER_TEMP/compat-provider.pid")" || true; fi
-          if command -v openshell >/dev/null 2>&1; then
-            timeout 60s openshell gateway remove nemoclaw || true
-          fi
+            } catch (error) { results.push({ resource: 'native sandboxes', status: 'failed', detail: error.message }); }
+          }
+          const pidFile = path.join(process.env.RUNNER_TEMP, 'compat-provider.pid');
+          if (fs.existsSync(pidFile)) {
+            try {
+              const pid = Number(fs.readFileSync(pidFile, 'utf8').trim());
+              if (!Number.isSafeInteger(pid) || pid <= 1) throw new Error('Invalid fixture provider PID');
+              process.kill(pid, 'SIGTERM');
+              results.push({ resource: 'fixture provider', status: 'passed' });
+            } catch (error) { results.push({ resource: 'fixture provider', status: error.code === 'ESRCH' ? 'passed' : 'failed', detail: error.message }); }
+          }
+          if (process.env.OPENSHELL_RESULT === 'success' && ['success', 'failure', 'cancelled'].includes(process.env.GATEWAY_RESULT)) {
+            results.push({ ...commandResult(await run(['openshell', 'gateway', 'remove', 'nemoclaw'], { timeoutMs: 60000 })), resource: 'gateway registration' });
+          }
+          const ok = results.every(result => ['passed', 'skipped'].includes(result.status));
+          await writeReportAtomically('reports/compatibility-cleanup.json', { ok, results });
+          console.log(serializeReport({ ok, results }));
+          process.exitCode = ok ? 0 : 1;
+          NODE
       - name: Upload compatibility report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -158,6 +193,7 @@ jobs:
           name: nemoclaw-compatibility-report
           path: |
             reports/nemoclaw-compatibility.json
+            reports/compatibility-cleanup.json
             ${{ runner.temp }}/compat-gateway-bootstrap.log
           if-no-files-found: error
           retention-days: 30
@@ -168,4 +204,5 @@ jobs:
           GATEWAY_RESULT: ${{ steps.gateway.outcome }}
           FIXTURE_RESULT: ${{ steps.fixture.outcome }}
           COMPATIBILITY_RESULT: ${{ steps.compatibility.outcome }}
-        run: test "$OPENSHELL_RESULT/$GATEWAY_RESULT/$FIXTURE_RESULT/$COMPATIBILITY_RESULT" = success/success/success/success
+          CLEANUP_RESULT: ${{ steps.cleanup.outcome }}
+        run: test "$OPENSHELL_RESULT/$GATEWAY_RESULT/$FIXTURE_RESULT/$COMPATIBILITY_RESULT/$CLEANUP_RESULT" = success/success/success/success/success

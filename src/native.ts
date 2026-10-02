@@ -16,7 +16,7 @@ import type {
  */
 export const NATIVE_CONTRACT = Object.freeze({
   upstream: 'NVIDIA/NemoClaw',
-  revision: '1eb370f20530bd1312ac86a27782ef8501b28ade',
+  revision: '1ccec4e141b0a830229ef68c96639851d24810fd',
   agentRoot: 'agents',
   manifest: 'manifest.yaml',
   policy: 'policy-additions.yaml',

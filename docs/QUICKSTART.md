@@ -29,14 +29,18 @@ node scripts/quickstart.mjs --workdir /tmp/nha-quickstart
 That runner performs the whole tutorial in order and prints every command as it goes:
 
 1. checks Node, Docker, and git (and builds this SDK from TypeScript if `dist/` is absent)
-2. clones `NVIDIA/NemoClaw` and checks out `1eb370f20530bd1312ac86a27782ef8501b28ade`, then runs
+2. clones `NVIDIA/NemoClaw` and checks out `1ccec4e141b0a830229ef68c96639851d24810fd`, then runs
    `npm ci`, `npm --prefix nemoclaw ci`, and `npm run build:cli`
-3. installs the checksum-pinned OpenShell CLI, gateway, and sandbox through NemoClaw's own installer
-4. creates the agent package and installs it into that checkout
-5. asks the real NemoClaw loader whether it accepts the agent
-6. onboards the agent and runs the harness inside the resulting sandbox
+3. creates and tests the agent package, installs it into the pinned checkout, and asks the real loader whether it accepts the agent
+4. installs the checksum-pinned OpenShell CLI, gateway, and sandbox through NemoClaw's own installer
+5. starts the managed gateway, verifies sandbox bridge reachability and gateway status, then confirms the sandbox name is unused
+6. records ownership, onboards the agent, and runs the harness inside the resulting sandbox
 
-It runs the package test before installing, and it prints `QUICKSTART OK` only when the deploy succeeded and the cleanup you asked for also succeeded. Add `--destroy` to delete the sandbox at the end, `--customize` to change the payload and redeploy it, `--name` and `--sandbox` to pick different names, or `--dry-run` to see the steps without running them.
+It prints `QUICKSTART OK` only when deployment and any requested cleanup succeed. Add `--destroy` to delete this run's sandbox at the end, `--customize` to change the payload and redeploy it, `--name` and `--sandbox` to pick different names, or `--dry-run` to see the steps without running them. Existing sandboxes and native registry or recovery records are refused before ownership is claimed and are never deleted by the runner.
+
+Every run reserves a new `quickstart-<id>.json` under the work directory before checking prerequisites. Use `--json /path/to/report.json` to select a different location; existing reports are preserved. The report records each phase, gateway and workspace, sandbox ownership, command deadlines, and bounded diagnostic output. `--timeout-ms` sets the deadline for each command (default: 15 minutes). Credential values from the environment are redacted from console output and reports.
+
+The pinned gateway bootstrap checks sandbox bridge reachability before onboarding. A failed check is recorded in the report's `bootstrap` stage, so an unreachable gateway fails before creating a sandbox. The gateway defaults to port 8080. Set `NEMOCLAW_GATEWAY_PORT` or `--gateway nemoclaw-<port>` to use another managed gateway; conflicting settings fail before runtime changes. The ownership receipt reaches disk before onboarding starts. On SIGINT or SIGTERM, the runner stops its child processes and cleans up its owned sandbox, including when `--destroy` was omitted. During ordinary success or failure, omitting `--destroy` retains the sandbox for inspection. The local inference fixture always stops when the runner exits; a retained starter harness can still echo tasks, but that fixture endpoint is no longer available.
 
 ## The same steps, one at a time
 
@@ -54,7 +58,7 @@ git clone -b develop https://github.com/knowlet/NemoClaw-Harness-Template.git
 
 ```bash
 cd ~/nha-work/NemoClaw
-git checkout 1eb370f20530bd1312ac86a27782ef8501b28ade
+git checkout 1ccec4e141b0a830229ef68c96639851d24810fd
 npm ci --ignore-scripts --no-audit --no-fund
 npm --prefix nemoclaw ci --ignore-scripts --no-audit --no-fund
 npm run build:cli
@@ -152,7 +156,7 @@ The whole loop, in the order that keeps you from deploying a stale image:
 # 1. edit my-harness/harness.mjs, and keep harness.test.mjs in step with it
 node --test my-harness/harness.test.mjs
 node bin/nha.mjs native install ./my-harness --nemoclaw ../NemoClaw --replace
-node ../NemoClaw/bin/nemoclaw.js my-sandbox destroy --yes --force
+node ../NemoClaw/bin/nemoclaw.js my-sandbox destroy --yes --no-cleanup-gateway
 node ../NemoClaw/bin/nemoclaw.js onboard --agent my-harness --name my-sandbox \
   --no-gpu --no-sandbox-gpu --non-interactive --yes --yes-i-accept-third-party-software --fresh
 node ../NemoClaw/bin/nemoclaw.js my-sandbox exec -- /usr/local/bin/my-harness your-task
@@ -192,13 +196,13 @@ collide with runtime paths or upstream directories.
 ## Cleanup
 
 ```bash
-node ../NemoClaw/bin/nemoclaw.js my-sandbox destroy --yes --force
+node ../NemoClaw/bin/nemoclaw.js my-sandbox destroy --yes --no-cleanup-gateway
 docker image ls | grep nemoclaw-sandbox-local
 ```
 
-Remove the work directory and the NemoClaw checkout when you are done; nothing else is left behind.
+Remove the work directory and the NemoClaw checkout when you are done. Sandbox cleanup preserves the managed gateway, installed OpenShell binaries, and Docker image cache; keep them if another run uses them.
 
-If the runner reports a cleanup failure it prints the command output and exits nonzero. Absence is only accepted from a message that names this sandbox and says it is gone, so an unrecognised phrasing is reported as a failure rather than quietly counted as success.
+If the runner reports a cleanup failure it retains sanitized diagnostics in its phase report and exits nonzero. Cleanup uses NemoClaw's destroy command without `--force`, so an unreachable gateway cannot be mistaken for successful remote deletion; it also preserves the gateway. A successful destroy command is followed by native-state and bound-gateway absence checks. Failed owned deployments collect sandbox state and recent logs before cleanup. Absence is only accepted from a message that names this sandbox and says it is gone, so an unrecognised phrasing is reported as a failure rather than quietly counted as success.
 
 ## What is verified, and by whom
 

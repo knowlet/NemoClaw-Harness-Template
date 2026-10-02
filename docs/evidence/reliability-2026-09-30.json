@@ -1,0 +1,160 @@
+{
+  "schemaVersion": "nha-reliability-evidence/v1",
+  "unofficial": true,
+  "recordedAt": "2026-09-30T04:15:24.966Z",
+  "sourceCommit": "178d2fb9b24cec41a5da2abec779442411ab5986",
+  "sourceScope": "Top-level sourceHashes and validation describe this historical commit, not later PR heads. realRuntime.withoutBridgeProbe uses its own nested sourceHashes; realRuntime.withBridgeProbe records only the pinned upstream gateway bootstrap.",
+  "environment": {
+    "platform": "linux",
+    "architecture": "arm64",
+    "node": "v24.18.0",
+    "docker": "29.2.1",
+    "openshell": "0.0.116",
+    "nemoclawRevision": "1eb370f20530bd1312ac86a27782ef8501b28ade",
+    "realModel": false
+  },
+  "validation": {
+    "command": "npm run check",
+    "exitCode": 0,
+    "tests": 287,
+    "passed": 287,
+    "failed": 0,
+    "skipped": 0,
+    "packedConsumer": "passed; offline install, declaration snapshots, ESM, CLI, scaffold, strict node/NodeNext with skipLibCheck=false",
+    "finalRefinementTests": {
+      "passed": 3,
+      "failed": 0
+    },
+    "workflowYaml": "all three modified workflows parsed",
+    "checkLogSha256": "9f4d014e08c5d7cc690b6f6c2fbf396db2e0ba21aa9f3fc2f053e23cad539302",
+    "deltaLogSha256": "44e20e71b8a00e144e84f81092b74d609a289669f55a891bd98b3075a852ee4f"
+  },
+  "realRuntime": {
+    "conclusion": "Verified failure diagnostics, preserved native cleanup refusal, and earlier bridge-readiness failure. Successful sandbox deployment is NOT established by these historical local attempts.",
+    "withoutBridgeProbe": {
+      "generatedAt": "2026-09-30T04:01:10.934Z",
+      "sourceHashes": {
+        "src/sdk.ts": "a529c1d48cfaa9d599e016ac9252b895a75ea6f1dde4e2d3ea514af237e592a6",
+        "scripts/integration/native-agent.mjs": "7f3c5d4a57df8ad6380ac4bc1188df0716581087e0c5c622e2d475be10518334",
+        "scripts/lib/qualification.mjs": "712c0088d57ec69968dbfe37d0307641beadb8d6c36b9c93d21097984ce75d76"
+      },
+      "loaderAccepted": true,
+      "deploymentVerified": false,
+      "onboardStatus": "failed",
+      "onboardDurationMs": 80074,
+      "sandboxStatus": "Error / ContainerExited",
+      "diagnostics": {
+        "sandbox": {
+          "status": "passed",
+          "exitCode": 0,
+          "durationMs": 23,
+          "stdoutTruncated": false,
+          "stderrTruncated": false,
+          "stdoutTail": "\u001b[1m\u001b[36mSandbox:\u001b[39m\u001b[0m\n\n  \u001b[2mId:\u001b[0m d835b3ba-f49c-47a3-9caf-bb3e21075515\n  \u001b[2mName:\u001b[0m nha-reliable-diag\n  \u001b[2mPhase:\u001b[0m Error\n  \u001b[2mResource version:\u001b[0m 6\n  \u001b[2mLabels:\u001b[0m \n    ai.nvidia.nemoclaw.create-attempt: 8dd9ae16754b9f81ab7bd772d0b832ffb71ca7719b213ef2ff73de1273cb41\n  \u001b[2mPolicy source:\u001b[0m sandbox\n  \u001b[2mRevision:\u001b[0m 1\n\n\u001b[1m\u001b[36mPolicy:\u001b[39m\u001b[0m\n\n  \u001b[2mversion\u001b[0m\u001b[2m:\u001b[0m 1\n  \u001b[2mfilesystem_policy\u001b[0m\u001b[2m:\u001b[0m\n    \u001b[2minclude_workdir\u001b[0m\u001b[2m:\u001b[0m true\n    \u001b[2mread_only\u001b[0m\u001b[2m:\u001b[0m\n    \u001b[2m- \u001b[0m/usr\n    \u001b[2m- \u001b[0m/lib\n    \u001b[2m- \u001b[0m/etc\n    \u001b[2m- \u001b[0m/proc\n    \u001b[2m- \u001b[0m/dev/urandom\n    \u001b[2mread_write\u001b[0m\u001b[2m:\u001b[0m\n    \u001b[2m- \u001b[0m/sandbox\n    \u001b[2m- \u001b[0m/sandbox/.reliable-echo\n    \u001b[2m- \u001b[0m/tmp\n    \u001b[2m- \u001b[0m/dev/null\n  \u001b[2mlandlock\u001b[0m\u001b[2m:\u001b[0m\n    \u001b[2mcompatibility\u001b[0m\u001b[2m:\u001b[0m strict\n  \u001b[2mprocess\u001b[0m\u001b[2m:\u001b[0m\n    \u001b[2mrun_as_user\u001b[0m\u001b[2m:\u001b[0m sandbox\n    \u001b[2mrun_as_group\u001b[0m\u001b[2m:\u001b[0m sandbox\n  \u001b[2mnetwork_policies\u001b[0m\u001b[2m:\u001b[0m\n    \u001b[2mmanaged_inference\u001b[0m\u001b[2m:\u001b[0m\n      \u001b[2mname\u001b[0m\u001b[2m:\u001b[0m managed_inference\n      \u001b[2mendpoints\u001b[0m\u001b[2m:\u001b[0m\n      \u001b[2m- \u001b[0mhost: inference.local\n        \u001b[2mport\u001b[0m\u001b[2m:\u001b[0m 443\n        \u001b[2mprotocol\u001b[0m\u001b[2m:\u001b[0m rest\n        \u001b[2menforcement\u001b[0m\u001b[2m:\u001b[0m enforce\n        \u001b[2mrules\u001b[0m\u001b[2m:\u001b[0m\n        \u001b[2m- \u001b[0mallow:\n            \u001b[2mmethod\u001b[0m\u001b[2m:\u001b[0m POST\n            \u001b[2mpath\u001b[0m\u001b[2m:\u001b[0m /v1/chat/completions\n        \u001b[2m- \u001b[0mallow:\n            \u001b[2mmethod\u001b[0m\u001b[2m:\u001b[0m GET\n            \u001b[2mpath\u001b[0m\u001b[2m:\u001b[0m /v1/models\n      \u001b[2mbinaries\u001b[0m\u001b[2m:\u001b[0m\n      \u001b[2m- \u001b[0mpath: /usr/local/bin/node\n      \u001b[2m- \u001b[0mpath: /usr/local/lib/nemo-reliable-echo/**\n"
+        },
+        "logs": {
+          "status": "passed",
+          "exitCode": 0,
+          "durationMs": 16,
+          "stdoutTruncated": false,
+          "stderrTruncated": false,
+          "stdoutTail": "[1790740895.965] [gateway] [INFO ] [openshell_server::grpc::sandbox] minted sandbox JWT\n[1790740895.970] [gateway] [INFO ] [openshell_server::grpc::sandbox] CreateSandbox request completed successfully\n[1790740957.669] [gateway] [INFO ] [openshell_server::compute] Sandbox phase changed\n[1790740957.669] [gateway] [WARN ] [openshell_server::compute] Container exited\n[1790740957.817] [gateway] [INFO ] [openshell_server::grpc::policy] GetSandboxConfig served from spec (backfilled version 1)\n"
+        }
+      },
+      "containerLogs": {
+        "status": "passed",
+        "exitCode": 0,
+        "durationMs": 44,
+        "stdoutTruncated": false,
+        "stderrTruncated": false,
+        "stderrTail": "2026-09-30T04:01:36.237Z INFO openshell_sandbox: Starting sandbox\n2026-09-30T04:01:36.237Z INFO openshell_sandbox: Fetching sandbox policy via gRPC\nopenshell: log push connect failed: failed to connect to OpenShell server\n2026-09-30T04:01:46.239Z WARN openshell_sandbox: Policy fetch failed, retrying\nopenshell: log push connect failed: failed to connect to OpenShell server\n2026-09-30T04:01:57.241Z WARN openshell_sandbox: Policy fetch failed, retrying\nopenshell: log push connect failed: failed to connect to OpenShell server\n2026-09-30T04:02:09.245Z WARN openshell_sandbox: Policy fetch failed, retrying\nopenshell: log push connect failed: failed to connect to OpenShell server\n2026-09-30T04:02:23.249Z WARN openshell_sandbox: Policy fetch failed, retrying\nError:   × Policy fetch failed after 5 attempts: failed to connect to OpenShell\n  │ server\n\n"
+      },
+      "cleanup": {
+        "status": "failed",
+        "category": "infrastructure",
+        "exitCode": 1,
+        "signal": null,
+        "durationMs": 1540,
+        "stdoutTruncated": false,
+        "stderrTruncated": false,
+        "stderrTail": "  Refusing to destroy retained sandbox 'nha-reliable-diag': NemoClaw could not select exactly one recovery record from the current immutable registry and Docker identities. No sandbox resources were removed. Resolve the identity conflict, then rerun 'nemoclaw nha-reliable-diag destroy'.\n",
+        "sandbox": "nha-reliable-diag",
+        "ownership": "owned",
+        "method": "native"
+      },
+      "existingDefaultStateUnchanged": true,
+      "gatewayCleanup": {
+        "status": "passed"
+      }
+    },
+    "withBridgeProbe": {
+      "generatedAt": "2026-09-30T04:08:37.635Z",
+      "bootstrapOptions": {
+        "exitOnFailure": false
+      },
+      "firewallAutoFix": false,
+      "gatewayBootstrap": {
+        "status": "failed",
+        "category": "infrastructure",
+        "exitCode": 1,
+        "signal": null,
+        "durationMs": 8468,
+        "stdoutTruncated": false,
+        "stderrTruncated": false,
+        "stdoutTail": "  Starting OpenShell gateway...\n  Gateway log: <home>/.local/state/nha-reliability-diag-MCUGpQ/gateway/openshell-gateway.log\n",
+        "stderrTail": "  ✗ Sandbox containers cannot reach the gateway at host.openshell.internal:18091 (172.20.0.1:18091).\n    A host firewall may be blocking traffic from the OpenShell Docker bridge.\n    To allow it:\n      sudo ufw allow from 172.20.0.0/16 to 172.20.0.1 port 18091 proto tcp\n    Then re-run `nemoclaw onboard`.\nSandbox containers cannot reach the OpenShell gateway (tcp_failed)\n"
+      },
+      "onboardingStarted": false,
+      "existingDefaultStateUnchanged": true,
+      "gatewayCleanup": {
+        "status": "passed"
+      }
+    },
+    "residuals": [
+      {
+        "sandbox": "nha-reliable-diag",
+        "gateway": "nemoclaw-18091",
+        "sandboxId": "d835b3ba-f49c-47a3-9caf-bb3e21075515",
+        "containerId": "5e7c0fc0595a9683b6f8d0b4b0d9c6ad4588d93d1185f4cb7767bd8ace600741",
+        "containerState": "exited (1)",
+        "disposition": "Preserved after native identity-bound recovery cleanup refused; gateway stopped."
+      },
+      {
+        "sandbox": "nha-reliable-live",
+        "gateway": "nemoclaw-18090",
+        "disposition": "Earlier raw cleanup removed the runtime sandbox but left native recovery state. Native reconciliation refused ambiguous identity; state preserved and gateway stopped."
+      }
+    ],
+    "listenersAfterVerification": {
+      "ports": [
+        18080,
+        18090,
+        18091
+      ],
+      "remaining": 0
+    },
+    "localReportDirectory": "reports/reliability-live-20260930-attempt6",
+    "localFailFastReport": "reports/reliability-live-20260930-attempt7/environment.json"
+  },
+  "sourceHashes": {
+    "src/sdk.ts": "a529c1d48cfaa9d599e016ac9252b895a75ea6f1dde4e2d3ea514af237e592a6",
+    "scripts/lib/qualification.mjs": "ec0f0eede8be5e4c7281fd31c0f75d01032f3279f7ece1629695f4467fa25478",
+    "scripts/compatibility.mjs": "a7c777c463df547aafd0795367af73422d573899749f568497b5c2fd667fb4b5",
+    "scripts/integration/native-agent.mjs": "7763236eac33b3863f47afd03bfd703ccf849de62d0c2b5e80326ae405d3fe22",
+    "scripts/quickstart.mjs": "cf99a2727058ef7bf624713397a3344182c9a368c8f975629121b23c0d04ae37",
+    ".github/workflows/runtime-integration.yml": "51afe9f00276c2642e0d9a3d39f21a47d326b1e24b346c7e337b3cdbe48e7e59",
+    ".github/workflows/quickstart.yml": "996e836fc4bb26258b892fe63d01c7a0f3092d1dc17370369163d67b7524f0e3",
+    ".github/workflows/upstream-compatibility.yml": "00b7c9e0d10b74dc48f4b125ba705fffd6e2de0953d7befd59fbb0ae9d5e7c85",
+    "test/sdk.test.mjs": "70947e0384c41819ebbaf49479f3e304792d446000fc18bf70529e7c6c80226c",
+    "test/qualification.test.mjs": "343fb70da840dfbf95a5373913bc8e4cd7d1dc26894e244154a4d15704cc6b10",
+    "test/compatibility.test.mjs": "7afb6fa227fc7baeb35571c1bb114edf6b4e425b1ff8d362c8718ca2e23db76d",
+    "test/native-integration.test.mjs": "b06c0d62933af0f8fd5ca737935da23bda3dddc3c279495c02ed3ed6ccc34ece",
+    "test/quickstart.test.mjs": "fbc891c4eb68d7324be382e917e43ee07776b325f04a82b2ee6d26b1b6fa0e53",
+    "test/runtime-workflow.test.mjs": "441c70c4499bbaf50275f5fc85e9f5f57158295b414a9eb5449c4d4fbcd38a6b"
+  },
+  "limitations": [
+    "This historical record claims no successful live native deployment, real model, effective-policy conformance, GPU inference, or x86_64 qualification.",
+    "The connectivity failure was observed on this host with isolated non-default gateway ports; it does not establish a default-port or CI failure.",
+    "Host firewall configuration was not changed. Native recovery authority was not bypassed."
+  ]
+}

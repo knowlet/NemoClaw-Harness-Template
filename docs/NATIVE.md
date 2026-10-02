@@ -17,7 +17,7 @@ no plugin API and no runtime registration call.
 This layout is **internal to a pinned upstream revision**, not a public extension point. Native
 packaging therefore records the revision it targets:
 
-    NVIDIA/NemoClaw@1eb370f20530bd1312ac86a27782ef8501b28ade
+    NVIDIA/NemoClaw@1ccec4e141b0a830229ef68c96639851d24810fd
 
 The SDK reads the checkout Git `HEAD` before install or verify and requires this exact revision. Other revisions may rename, add, or reject fields; use the explicit compatibility qualification path before changing the pin.
 
@@ -37,6 +37,42 @@ The SDK reads the checkout Git `HEAD` before install or verify and requires this
 
 `native install` and `native verify` fail with `UNSUPPORTED_UPSTREAM` when the checkout Git `HEAD` is not `NATIVE_CONTRACT.revision`. The CLI accepts `--allow-unsupported-upstream` only as an explicit escape hatch for a compatibility qualification run; it records the actual checkout revision in its JSON result.
 
+## Native integration qualification
+
+Use the native runner against a built checkout at the supported revision:
+
+    node scripts/integration/native-agent.mjs \
+      --nemoclaw ../NemoClaw --name native-echo \
+      --deploy --gateway nemoclaw --json reports/native.json
+
+The gateway must already be running and the provider environment must be configured. Omit
+`--deploy` for scaffold, install, and loader verification only; `deploymentVerified` then stays
+`false`. Deployment resolves one gateway and port, refuses a sandbox that already exists, and
+checks native registry, retained recovery, and resumable session state before recording ownership. The default sandbox name is unique per run; `--sandbox NAME`
+selects an explicit name. Owned sandboxes receive cleanup on success, failure, or `SIGINT`/`SIGTERM`. Cleanup uses NemoClaw's native destroy command without `--force` and with `--no-cleanup-gateway`, then verifies both remote absence and retired native state. An upstream recovery refusal remains a failed cleanup; the runner preserves the resource and evidence.
+The installed agent package remains in the checkout for inspection.
+
+Each stage writes an atomic JSON report. Without `--json`, the runner chooses
+`reports/native-<run-id>.json`; an existing report path is refused. `sandboxResource`, `nativeState`, `checkout`, and `gateway`
+form the ownership receipt for cleanup after a hard process kill. The final `status` includes
+cleanup: successful sandbox execution with failed cleanup remains a failed run, even when
+`deploymentVerified` is `true`. An interrupted run exits with 130 (`SIGINT`) or 143 (`SIGTERM`).
+
+Native, compatibility, and quickstart runners share internal command, output, gateway, and cleanup helpers.
+Commands have a 15-minute default deadline; native `--timeout-ms N` changes the per-command
+deadline. Each native cleanup command is capped at 60 seconds, within a shared total cleanup deadline. Cancellation terminates the command's process
+group on POSIX, including SDK CLI and loader descendants, with bounded time to settle. Captured
+output is limited to 8 KiB per stream and report tails to 4 KiB. Complete loader JSON uses a
+separate temporary file with a 2 MiB read limit so long checkout paths do not invalidate it.
+Known credential environment
+values of at least four characters are redacted before output truncation, including values split
+across chunks; report strings are sanitized too. This does not promise to recognize arbitrary
+secrets absent from the environment or transformed by a provider.
+
+All three CI workflows record cleanup before uploading evidence and require cleanup to pass. Gateway bootstrap retains the pinned runtime's sandbox-to-gateway connectivity check; a host-side Connected status alone cannot establish that a sandbox can fetch its policy.
+Its native fallback uses the recorded ownership, gateway, and workspace; a pre-existing or
+unclaimed native sandbox is never deleted by that fallback.
+
 ## Upstream compatibility qualification
 
 Use the compatibility runner to compare more than one NemoClaw checkout with the same generated package and loader probe:
@@ -47,11 +83,11 @@ Use the compatibility runner to compare more than one NemoClaw checkout with the
       --build \
       --json reports/nemoclaw-compatibility.json
 
-The report records each checkout's actual Git revision, whether it matches the pinned contract, and separate `scaffold`, `install`, `loader`, `gateway`, `preflight`, `onboard`, `sandbox`, `exec`, and `cleanup` stages. `--deploy` adds real onboarding and one deterministic sandbox task; it also requires a working OpenShell installation and the documented provider environment. Deploy cases receive per-run sandbox names that satisfy NemoClaw's routed-name contract, which caps a name at 19 characters and rejects consecutive hyphens, so the run token keeps the name unique when the prefix does not fit. Each case probes its name before onboarding, requires the sandbox to exist on the bound gateway afterwards, and cleans up only after claiming ownership. Use `--sandbox-token` when a CI job needs reproducible names. Failure categories distinguish `contract`, `infrastructure`, and `product` problems. Candidate revisions are intentionally allowed inside this runner so compatibility can be measured; normal SDK install and verify commands remain pinned by default.
+The report records each checkout's actual Git revision, whether it matches the pinned contract, and separate `scaffold`, `install`, `loader`, `gateway`, `native-state`, `preflight`, `onboard`, `sandbox`, `exec`, and `cleanup` stages. `--deploy` adds real onboarding and one deterministic sandbox task; it also requires a working OpenShell installation and the documented provider environment. Deploy cases receive per-run sandbox names that satisfy NemoClaw's routed-name contract, which caps a name at 19 characters and rejects consecutive hyphens, so the run token keeps the name unique when the prefix does not fit. Each case probes its name before onboarding, requires the sandbox to exist on the bound gateway afterwards, and cleans up only after claiming ownership. Use `--sandbox-token` when a CI job needs reproducible names. Failure categories distinguish `contract`, `infrastructure`, and `product` problems. Candidate revisions are intentionally allowed inside this runner so compatibility can be measured; normal SDK install and verify commands remain pinned by default.
 
-The runner never starts a gateway, so a deploy run needs one already running, and it resolves exactly one gateway binding before it touches anything. NemoClaw derives its gateway from `NEMOCLAW_GATEWAY_PORT`: the default port `8080` maps to the bare `nemoclaw` gateway and any other port to `nemoclaw-<port>`. A deploy run therefore requires `NEMOCLAW_GATEWAY_PORT`, and `--gateway NAME` must agree with it; a mismatch, an invalid port, or a missing port stops the case before the build with `GATEWAY_BINDING_MISMATCH`, `GATEWAY_PORT_INVALID`, or `GATEWAY_PORT_UNSET`. The resolved name is passed to `sandbox get` and `sandbox delete`, onboarding receives the same port explicitly, and every case records `gateway: { name, port, workspace }` next to its sandbox, so the probe, the onboarding, and the cleanup cannot act on different gateways. Start the managed gateway through the pinned NemoClaw checkout before qualifying; the [compatibility workflow](../.github/workflows/upstream-compatibility.yml) shows that bootstrap.
+The runner never starts a gateway, so a deploy run needs one already running, and it resolves exactly one gateway binding before it touches anything. NemoClaw derives its gateway from `NEMOCLAW_GATEWAY_PORT`: the default port `8080` maps to the bare `nemoclaw` gateway and any other port to `nemoclaw-<port>`. A deploy run therefore requires `NEMOCLAW_GATEWAY_PORT` or a derivable `--gateway NAME`; when both are supplied they must agree; a mismatch, an invalid port, or a missing port stops the case before the build with `GATEWAY_BINDING_MISMATCH`, `GATEWAY_PORT_INVALID`, or `GATEWAY_PORT_UNSET`. The resolved name is passed to `sandbox get`; onboarding and native cleanup receive the same port explicitly, and every case records `gateway: { name, port, workspace }` next to its sandbox, so the probe, the onboarding, and the cleanup cannot act on different gateways. Start the managed gateway through the pinned NemoClaw checkout before qualifying; the [compatibility workflow](../.github/workflows/upstream-compatibility.yml) shows that bootstrap.
 
-Deploy runs also keep their evidence on disk while they work. When `--json REPORT` is set, the report is written atomically before onboarding starts and again after every stage, so a runner that is killed still leaves the owned sandbox, its gateway, and its port for the workflow's fallback cleanup. A `SIGINT` or `SIGTERM` stops the run, ends the process group of the command that was running, deletes the sandboxes this run owns within a bounded budget, and records `status: "interrupted"` with the signal that arrived.
+Deploy runs also keep their evidence on disk while they work. Every run reserves a report before side effects (`--json REPORT` selects its path); phase results and ownership are written atomically before onboarding and again after cleanup, so a runner that is killed still leaves the owned sandbox, its gateway, and its port for the workflow's fallback cleanup. A `SIGINT` or `SIGTERM` stops the run, ends the process group of the command that was running, attempts verified native cleanup of the sandboxes this run owns within a bounded budget, and records `status: "interrupted"` with the signal that arrived.
 
 The package contains `manifest.yaml`, `policy-additions.yaml`, `Dockerfile`, `start.sh`, `launcher.sh`,
 `harness.mjs`, `harness.test.mjs`, `dependency-review.md`, and `native-agent.json`.

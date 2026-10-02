@@ -207,6 +207,13 @@ test('client rejects every response field that violates the declared ChatRespons
     ['non-object usage', { choices: [valid], usage: 'tokens' }],
     ['non-numeric usage entry', { choices: [valid], usage: { prompt_tokens: '3' } }],
     ['null known usage counter', { choices: [valid], usage: { total_tokens: null } }],
+    ...['prompt_tokens_details', 'completion_tokens_details'].flatMap((field) => [
+      ['null', null],
+      ['array', []],
+      ['string', 'tokens'],
+      ['number', 3],
+      ['boolean', false],
+    ].map(([label, value]) => [`${label} ${field}`, { choices: [valid], usage: { [field]: value } }])),
   ];
   let body;
   const baseUrl = await server(t, (_req, res) => res.end(body));
@@ -225,6 +232,29 @@ test('client rejects every response field that violates the declared ChatRespons
       body = response;
       await assert.rejects(client.chat([{ role: 'user', content: 'x' }]), code('INVALID_RESPONSE'));
     });
+  }
+});
+test('client preserves empty and opaque usage detail objects for each declared field', async (t) => {
+  let response;
+  const baseUrl = await server(t, (_req, res) => res.end(JSON.stringify(response)));
+  const client = createInferenceClient({ model: 'm', baseUrl, development: true });
+  for (const field of ['prompt_tokens_details', 'completion_tokens_details']) {
+    for (const [label, details] of [
+      ['empty', {}],
+      ['nested provider extensions', {
+        provider_extension: { buckets: [0, null, { label: 'opaque', enabled: true }] },
+        provider_counter: 'provider-defined',
+        nullable_extension: null,
+      }],
+    ]) {
+      await t.test(`${field}: ${label}`, async () => {
+        response = {
+          choices: [{ message: { role: 'assistant', content: 'OK' } }],
+          usage: { [field]: details, provider_extension: { region: 'fixture' } },
+        };
+        assert.deepEqual(await client.chat([{ role: 'user', content: 'x' }]), response);
+      });
+    }
   }
 });
 test('client preserves valid choices, tool calls, optional fields, and provider extensions', async (t) => {
