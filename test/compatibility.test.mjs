@@ -533,6 +533,8 @@ test('an interrupted run keeps its ownership receipt and cleans up its sandbox',
   const deleted = path.join(root, 'deleted.log');
   const onboardPid = path.join(root, 'onboard.pid');
   let runner;
+  let onboardChildPid;
+  let exitTimer;
   try {
     await fakeCheckout(checkout);
     const tools = await fakeTooling(root);
@@ -557,24 +559,29 @@ test('an interrupted run keeps its ownership receipt and cleans up its sandbox',
       },
       stdio: 'ignore',
     });
-    await waitForFile(onboardPid);
+    onboardChildPid = Number(await waitForFile(onboardPid));
     const receipt = JSON.parse(await readFile(report, 'utf8'));
     assert.equal(receipt.status, 'running');
     assert.equal(receipt.cases[0].sandbox.ownership, 'owned');
     assert.equal(receipt.cases[0].gateway.name, 'nemoclaw');
     const exited = once(runner, 'exit');
     runner.kill('SIGTERM');
-    const [code] = await exited;
+    const [code] = await Promise.race([
+      exited,
+      new Promise((_resolve, reject) => { exitTimer = setTimeout(() => reject(new Error('onboarding interruption did not settle')), 5000); }),
+    ]);
+    clearTimeout(exitTimer);
     assert.equal(code, 143);
     const final = JSON.parse(await readFile(report, 'utf8'));
     assert.equal(final.status, 'interrupted');
     assert.equal(final.interrupted.signal, 'SIGTERM');
     assert.equal(final.cases[0].stages.cleanup.status, 'passed');
     assert.equal((await readFile(deleted, 'utf8')).trim(), final.cases[0].sandbox.name);
-    const pid = Number((await readFile(onboardPid, 'utf8')).trim());
-    assert.equal(await waitForProcessExit(pid), true, 'the interrupted onboarding child must not survive');
+    assert.equal(await waitForProcessExit(onboardChildPid), true, 'the interrupted onboarding child must not survive');
   } finally {
+    clearTimeout(exitTimer);
     if (runner && runner.exitCode === null) runner.kill('SIGKILL');
+    if (onboardChildPid) { try { process.kill(-onboardChildPid, 'SIGKILL'); } catch {} }
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -740,6 +747,8 @@ test('signals during cleanup let the owned deletion finish exactly once', async 
   const deletePid = path.join(root, 'delete.pid');
   const deleted = path.join(root, 'deleted.log');
   let runner;
+  let deleteChildPid;
+  let exitTimer;
   try {
     await fakeCheckout(checkout);
     const tools = await fakeTooling(root);
@@ -747,20 +756,26 @@ test('signals during cleanup let the owned deletion finish exactly once', async 
       env: { ...process.env, PATH: tools + ':' + process.env.PATH, NEMOCLAW_GATEWAY_PORT: '8080', NHA_CREATED_MARKER: path.join(root, 'created'), NHA_DELETE_PID_FILE: deletePid, NHA_DELETE_LOG: deleted },
       stdio: 'ignore',
     });
-    await waitForFile(deletePid);
+    deleteChildPid = Number(await waitForFile(deletePid));
     assert.equal(JSON.parse(await readFile(report, 'utf8')).cases[0].stages.cleanup.status, 'running');
     const exited = once(runner, 'exit');
     runner.kill('SIGTERM');
     await new Promise((resolve) => setTimeout(resolve, 50));
     runner.kill('SIGINT');
-    const [code] = await exited;
+    const [code] = await Promise.race([
+      exited,
+      new Promise((_resolve, reject) => { exitTimer = setTimeout(() => reject(new Error('cleanup interruption did not settle')), 5000); }),
+    ]);
+    clearTimeout(exitTimer);
     assert.equal(code, 143);
     const parsed = JSON.parse(await readFile(report, 'utf8'));
     assert.equal(parsed.status, 'interrupted');
     assert.equal(parsed.cases[0].stages.cleanup.status, 'passed');
     assert.deepEqual((await readFile(deleted, 'utf8')).trim().split('\n'), [parsed.cases[0].sandbox.name]);
   } finally {
+    clearTimeout(exitTimer);
     if (runner && runner.exitCode === null) runner.kill('SIGKILL');
+    if (deleteChildPid) { try { process.kill(-deleteChildPid, 'SIGKILL'); } catch {} }
     await rm(root, { recursive: true, force: true });
   }
 });

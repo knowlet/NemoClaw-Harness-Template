@@ -431,10 +431,11 @@ export { writeReportAtomically as writeReport };
 
 /**
  * True only when the table or JSON status output reports a live connection.
- * "Disconnected" contains "connected", so the match requires a boundary.
+ * Explicit negative statuses take precedence over a positive token elsewhere.
  */
 export function gatewayStatusIsConnected(output) {
   const text = String(output ?? '').replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, '');
+  if (/\b(?:not\s+connected|disconnected)\b/i.test(text)) return false;
   return /(?:^|[\s"'])Connected(?:\s|$|[("'])/i.test(text);
 }
 

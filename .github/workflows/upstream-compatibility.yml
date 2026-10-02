@@ -143,6 +143,7 @@ jobs:
         if: always()
         continue-on-error: true
         env:
+          OPENSHELL_RESULT: ${{ steps.openshell.outcome }}
           GATEWAY_RESULT: ${{ steps.gateway.outcome }}
           HOME: ${{ runner.temp }}/nha-compat-home
         run: |
@@ -177,7 +178,7 @@ jobs:
               results.push({ resource: 'fixture provider', status: 'passed' });
             } catch (error) { results.push({ resource: 'fixture provider', status: error.code === 'ESRCH' ? 'passed' : 'failed', detail: error.message }); }
           }
-          if (process.env.GATEWAY_RESULT === 'success') {
+          if (process.env.OPENSHELL_RESULT === 'success' && ['success', 'failure', 'cancelled'].includes(process.env.GATEWAY_RESULT)) {
             results.push({ ...commandResult(await run(['openshell', 'gateway', 'remove', 'nemoclaw'], { timeoutMs: 60000 })), resource: 'gateway registration' });
           }
           const ok = results.every(result => ['passed', 'skipped'].includes(result.status));

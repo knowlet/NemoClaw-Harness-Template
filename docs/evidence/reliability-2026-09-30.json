@@ -2,6 +2,8 @@
   "schemaVersion": "nha-reliability-evidence/v1",
   "unofficial": true,
   "recordedAt": "2026-09-30T04:15:24.966Z",
+  "sourceCommit": "178d2fb9b24cec41a5da2abec779442411ab5986",
+  "sourceScope": "Top-level sourceHashes and validation describe this historical commit, not later PR heads. realRuntime.withoutBridgeProbe uses its own nested sourceHashes; realRuntime.withBridgeProbe records only the pinned upstream gateway bootstrap.",
   "environment": {
     "platform": "linux",
     "architecture": "arm64",
@@ -28,7 +30,7 @@
     "deltaLogSha256": "44e20e71b8a00e144e84f81092b74d609a289669f55a891bd98b3075a852ee4f"
   },
   "realRuntime": {
-    "conclusion": "Verified failure diagnostics, preserved native cleanup refusal, and earlier bridge-readiness failure. Successful sandbox deployment is NOT established for this patch.",
+    "conclusion": "Verified failure diagnostics, preserved native cleanup refusal, and earlier bridge-readiness failure. Successful sandbox deployment is NOT established by these historical local attempts.",
     "withoutBridgeProbe": {
       "generatedAt": "2026-09-30T04:01:10.934Z",
       "sourceHashes": {
@@ -151,7 +153,7 @@
     "test/runtime-workflow.test.mjs": "441c70c4499bbaf50275f5fc85e9f5f57158295b414a9eb5449c4d4fbcd38a6b"
   },
   "limitations": [
-    "No successful current-patch live native deployment, real model, effective-policy conformance, GPU inference, or x86_64 qualification is claimed.",
+    "This historical record claims no successful live native deployment, real model, effective-policy conformance, GPU inference, or x86_64 qualification.",
     "The connectivity failure was observed on this host with isolated non-default gateway ports; it does not establish a default-port or CI failure.",
     "Host firewall configuration was not changed. Native recovery authority was not bypassed."
   ]

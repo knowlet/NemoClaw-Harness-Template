@@ -8,6 +8,7 @@ import path from 'node:path';
 import {
   cleanupSandbox,
   collectSandboxDiagnostics,
+  gatewayStatusIsConnected,
   probeNativeState,
   resolveGatewayBinding,
   run,
@@ -16,6 +17,32 @@ import {
   terminateActiveCommands,
   writeReportAtomically,
 } from '../scripts/lib/qualification.mjs';
+
+test('gateway health accepts connected plain, table, JSON, and colored status forms', () => {
+  for (const output of [
+    'Connected',
+    'Status: Connected',
+    '│ Status │ Connected │',
+    '{"status":"Connected"}',
+    '\u001b[32mStatus: Connected\u001b[0m',
+    'Status: Connected (not using a proxy)',
+  ]) assert.equal(gatewayStatusIsConnected(output), true, output);
+});
+
+test('gateway health rejects explicit negative statuses even with a positive token present', () => {
+  for (const output of [
+    'Status: Not Connected',
+    'Status: NOT\tCONNECTED',
+    '{"status":"Not Connected"}',
+    '│ Status │ Not Connected │',
+    'Status: \u001b[31mNot\u001b[0m \u001b[31mConnected\u001b[0m',
+    'Status: Disconnected',
+    'Status: Not Connected\nConnected clients: 0',
+    'Status: Disconnected\nPrevious status: Connected',
+    'Status: Connected\nStatus: Not Connected',
+  ]) assert.equal(gatewayStatusIsConnected(output), false, output);
+  for (const output of [undefined, null, '', 'Status: Unknown']) assert.equal(gatewayStatusIsConnected(output), false);
+});
 
 test('failure diagnostics never inspect an unowned sandbox', async () => {
   let calls = 0;

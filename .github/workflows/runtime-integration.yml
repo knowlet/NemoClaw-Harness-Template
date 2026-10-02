@@ -13,6 +13,9 @@ jobs:
   live:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    env:
+      OPENSHELL_GATEWAY: nemoclaw
+      OPENSHELL_WORKSPACE: default
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -99,7 +102,7 @@ jobs:
           node scripts/integration/fixture-provider.mjs > "$RUNNER_TEMP/provider.log" 2>&1 &
           fixture_pid=$!
           echo "$fixture_pid" > "$RUNNER_TEMP/provider.pid"
-          trap 'kill "$fixture_pid" 2>/dev/null || true' EXIT
+          trap 'kill "$fixture_pid" 2>/dev/null || true; wait "$fixture_pid" 2>/dev/null || true' EXIT
           for attempt in $(seq 1 30); do
             if ! kill -0 "$fixture_pid" 2>/dev/null; then
               cat "$RUNNER_TEMP/provider.log"
@@ -119,11 +122,51 @@ jobs:
         continue-on-error: true
         env:
           NEMOCLAW_GATEWAY_PORT: '8080'
+          OPENSHELL_GATEWAY: nemoclaw
+          OPENSHELL_WORKSPACE: default
           NEMOCLAW_PROVIDER: custom
           NEMOCLAW_MODEL: fixture-model
           NEMOCLAW_PROVIDER_KEY: fixture-only-not-a-secret
           NEMOCLAW_ENDPOINT_URL: http://host.openshell.internal:18080/v1
         run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs/promises';
+          import path from 'node:path';
+          import { run, commandResult, gatewayStatusIsConnected, probeNativeState, serializeReport, writeReportAtomically } from './scripts/lib/qualification.mjs';
+          import { classifySandboxPreflightResult } from './scripts/lib/sandbox-cleanup.mjs';
+          const sandbox = 'nha-host';
+          const target = 'reports/' + sandbox + '-ownership.json';
+          const runIdentity = Object.fromEntries(['GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'GITHUB_JOB', 'GITHUB_SHA'].map(key => [key, process.env[key]]));
+          if (Object.values(runIdentity).some(value => !value)) throw new Error('Runtime ownership requires the current workflow identity');
+          const gateway = { name: 'nemoclaw', port: 8080, workspace: 'default' };
+          const env = { ...process.env, NEMOCLAW_GATEWAY_PORT: '8080', OPENSHELL_GATEWAY: gateway.name, OPENSHELL_WORKSPACE: gateway.workspace };
+          const receipt = { schemaVersion: 'nha-runtime-ownership/v1', runIdentity, home: process.env.HOME, checkout: path.resolve('.upstream/NemoClaw'), gateway, sandbox: { name: sandbox, ownership: 'unknown' }, stages: {}, deployment: { status: 'pending' } };
+          await fs.writeFile(target, serializeReport(receipt), { flag: 'wx', mode: 0o600 });
+          const complete = value => !value.errorCode && !value.timedOut && !value.signal && !value.cancelled && !value.stdoutTruncated && !value.stderrTruncated;
+          try {
+            const status = await run(['openshell', 'status', '-g', gateway.name], { env, timeoutMs: 30000 });
+            receipt.stages.gateway = commandResult(status);
+            if (!complete(status) || status.code !== 0 || !gatewayStatusIsConnected(status.stdout)) {
+              receipt.stages.gateway.status = 'failed';
+              throw new Error('Bound gateway is not connected');
+            }
+            receipt.nativeState = await probeNativeState(receipt, { gateway: gateway.name, gatewayPort: gateway.port }, { env });
+            if (receipt.nativeState.status !== 'passed') throw new Error('Native lifecycle state is not available');
+            const lookup = await run(['openshell', 'sandbox', 'get', '-g', gateway.name, sandbox], { env, timeoutMs: 30000 });
+            const verdict = classifySandboxPreflightResult({ ...lookup, sandbox });
+            receipt.stages.preflight = { ...commandResult(lookup), status: complete(lookup) && verdict.ok ? 'passed' : 'failed' };
+            if (complete(lookup) && verdict.preexisting) receipt.sandbox.ownership = 'pre-existing';
+            if (receipt.stages.preflight.status !== 'passed') throw new Error('Sandbox absence was not verified');
+            receipt.sandbox.ownership = 'owned';
+            receipt.nativeState.ownership = 'owned';
+            receipt.deployment.status = 'started';
+            await writeReportAtomically(target, receipt);
+          } catch (error) {
+            receipt.error = error.message;
+            await writeReportAtomically(target, receipt);
+            throw error;
+          }
+          NODE
           set +e
           timeout 900 node .upstream/NemoClaw/bin/nemoclaw.js onboard --name nha-host --agent openclaw --no-gpu --no-sandbox-gpu --non-interactive --yes --yes-i-accept-third-party-software > "$RUNNER_TEMP/onboard.log" 2>&1
           rc=$?
@@ -151,6 +194,9 @@ jobs:
         id: byoc
         if: ${{ !cancelled() && steps.gateway.outcome == 'success' && steps.fixture.outcome == 'success' }}
         continue-on-error: true
+        env:
+          OPENSHELL_GATEWAY: nemoclaw
+          OPENSHELL_WORKSPACE: default
         run: |
           set -o pipefail
           node bin/nha.mjs init "$RUNNER_TEMP/harness" --name integration-echo
@@ -158,6 +204,43 @@ jobs:
           printf '\nUSER root\nRUN mkdir /policy-probe && chmod 0777 /policy-probe && echo test-only > /policy-probe/readable.txt && chmod 0644 /policy-probe/readable.txt\nUSER 1000:1000\n' >> "$RUNNER_TEMP/harness/Dockerfile"
           docker build --build-arg BASE_IMAGE=node:24-bookworm-slim -t nha-integration:dev "$RUNNER_TEMP/harness" > "$RUNNER_TEMP/build.log" 2>&1 || { tail -n 25 "$RUNNER_TEMP/build.log"; exit 1; }
           docker image inspect nha-integration:dev --format '{{.Id}}' > reports/image-id.txt
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs/promises';
+          import path from 'node:path';
+          import { run, commandResult, gatewayStatusIsConnected, serializeReport, writeReportAtomically } from './scripts/lib/qualification.mjs';
+          import { classifySandboxPreflightResult } from './scripts/lib/sandbox-cleanup.mjs';
+          const sandbox = 'nha-integration';
+          const target = 'reports/' + sandbox + '-ownership.json';
+          const runIdentity = Object.fromEntries(['GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'GITHUB_JOB', 'GITHUB_SHA'].map(key => [key, process.env[key]]));
+          if (Object.values(runIdentity).some(value => !value)) throw new Error('Runtime ownership requires the current workflow identity');
+          const gateway = { name: 'nemoclaw', port: 8080, workspace: 'default' };
+          const env = { ...process.env, NEMOCLAW_GATEWAY_PORT: '8080', OPENSHELL_GATEWAY: gateway.name, OPENSHELL_WORKSPACE: gateway.workspace };
+          const receipt = { schemaVersion: 'nha-runtime-ownership/v1', runIdentity, home: process.env.HOME, checkout: path.resolve('.upstream/NemoClaw'), gateway, sandbox: { name: sandbox, ownership: 'unknown' }, stages: {}, deployment: { status: 'pending' } };
+          await fs.writeFile(target, serializeReport(receipt), { flag: 'wx', mode: 0o600 });
+          const complete = value => !value.errorCode && !value.timedOut && !value.signal && !value.cancelled && !value.stdoutTruncated && !value.stderrTruncated;
+          try {
+            const status = await run(['openshell', 'status', '-g', gateway.name], { env, timeoutMs: 30000 });
+            receipt.stages.gateway = commandResult(status);
+            if (!complete(status) || status.code !== 0 || !gatewayStatusIsConnected(status.stdout)) {
+              receipt.stages.gateway.status = 'failed';
+              throw new Error('Bound gateway is not connected');
+            }
+
+            const lookup = await run(['openshell', 'sandbox', 'get', '-g', gateway.name, sandbox], { env, timeoutMs: 30000 });
+            const verdict = classifySandboxPreflightResult({ ...lookup, sandbox });
+            receipt.stages.preflight = { ...commandResult(lookup), status: complete(lookup) && verdict.ok ? 'passed' : 'failed' };
+            if (complete(lookup) && verdict.preexisting) receipt.sandbox.ownership = 'pre-existing';
+            if (receipt.stages.preflight.status !== 'passed') throw new Error('Sandbox absence was not verified');
+            receipt.sandbox.ownership = 'owned';
+
+            receipt.deployment.status = 'started';
+            await writeReportAtomically(target, receipt);
+          } catch (error) {
+            receipt.error = error.message;
+            await writeReportAtomically(target, receipt);
+            throw error;
+          }
+          NODE
           if ! timeout 180 node bin/nha.mjs launch --name nha-integration --image nha-integration:dev --dev-image --policy "$RUNNER_TEMP/harness/policy.yaml" --task NHA_LIVE_OK 2>&1 | tee "$RUNNER_TEMP/live.txt"; then
             openshell sandbox get nha-integration || true
             for cid in $(docker ps -aq --filter ancestor=nha-integration:dev); do
@@ -199,44 +282,35 @@ jobs:
           node --input-type=module <<'NODE'
           import fs from 'node:fs';
           import path from 'node:path';
-          import { classifyDestroyResult, classifySandboxPreflightResult } from './scripts/lib/sandbox-cleanup.mjs';
-          import { run, cleanupSandbox, commandResult, serializeReport, writeReportAtomically } from './scripts/lib/qualification.mjs';
+          import { run, cleanupSandbox, readStructuredReport, serializeReport, writeReportAtomically } from './scripts/lib/qualification.mjs';
           const results = [];
-          async function destroy(sandbox, gateway) {
-            const argv = ['openshell', 'sandbox', 'delete', ...(gateway ? ['-g', gateway.name] : []), sandbox];
-            const result = await run(argv, {
-              timeoutMs: 60000,
-              env: gateway ? { ...process.env, OPENSHELL_WORKSPACE: gateway.workspace } : process.env,
-            });
-            const verdict = classifyDestroyResult({ ...result, sandbox });
-            const ok = !result.errorCode && !result.timedOut && !result.signal && !result.cancelled && !result.stdoutTruncated && !result.stderrTruncated && verdict.ok;
-            results.push({ ...commandResult(result), resource: sandbox, gateway,
-              status: ok ? 'passed' : 'failed', absent: ok && verdict.absent, detail: verdict.detail });
-          }
-          async function destroyNative(sandbox, gateway) {
-            const env = { ...process.env, NEMOCLAW_GATEWAY_PORT: String(gateway.port), OPENSHELL_WORKSPACE: gateway.workspace };
-            const result = await run([process.execPath, '.upstream/NemoClaw/bin/nemoclaw.js', sandbox, 'destroy', '--yes', '--no-cleanup-gateway'], { env, timeoutMs: 60000 });
-            const cleanup = commandResult(result);
-            if (cleanup.status === 'passed') {
-              const probe = await run(['openshell', 'sandbox', 'get', '-g', gateway.name, sandbox], { env, timeoutMs: 10000 });
-              const absent = classifySandboxPreflightResult({ ...probe, sandbox });
-              cleanup.verification = commandResult(probe);
-              cleanup.absent = absent.ok && !probe.errorCode && !probe.timedOut && !probe.signal && !probe.cancelled && !probe.stdoutTruncated && !probe.stderrTruncated;
-              if (!cleanup.absent) cleanup.status = 'failed';
-            }
-            results.push({ ...cleanup, resource: sandbox, gateway });
-          }
-          if (process.env.OPENSHELL_RESULT === 'success') {
-            const gateway = { name: 'nemoclaw', port: 8080, workspace: process.env.OPENSHELL_WORKSPACE || 'default' };
-            for (const [sandbox, outcome] of [['nha-integration', process.env.BYOC_RESULT], ['nha-host', process.env.ONBOARD_RESULT]]) {
-              if (['success', 'failure'].includes(outcome)) {
-                if (sandbox === 'nha-host') await destroyNative(sandbox, gateway);
-                else await destroy(sandbox, gateway);
+          const runKeys = ['GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'GITHUB_JOB', 'GITHUB_SHA'];
+          for (const [sandbox, outcome] of [['nha-integration', process.env.BYOC_RESULT], ['nha-host', process.env.ONBOARD_RESULT]]) {
+            const target = 'reports/' + sandbox + '-ownership.json';
+            try {
+              if (!fs.existsSync(target)) {
+                results.push({ resource: sandbox, status: ['success', 'failure', 'cancelled'].includes(outcome) ? 'failed' : 'skipped', detail: 'No ownership receipt' });
+                continue;
               }
-              else results.push({ resource: sandbox, status: 'skipped', detail: 'Deployment step did not run' });
+              const receipt = await readStructuredReport(target);
+              if (receipt.schemaVersion !== 'nha-runtime-ownership/v1' || runKeys.some(key => !process.env[key] || receipt.runIdentity?.[key] !== process.env[key]) || receipt.home !== process.env.HOME || receipt.checkout !== path.resolve('.upstream/NemoClaw') || receipt.sandbox?.name !== sandbox || receipt.gateway?.name !== 'nemoclaw' || receipt.gateway.port !== 8080 || receipt.gateway.workspace !== 'default') {
+                throw new Error('Runtime ownership receipt does not match this workflow and resource');
+              }
+              if (receipt.sandbox.ownership !== 'owned') {
+                results.push({ resource: sandbox, status: 'skipped', detail: 'Sandbox ownership was not established' });
+                continue;
+              }
+              if (receipt.deployment?.status !== 'started' || receipt.stages?.gateway?.status !== 'passed' || receipt.stages?.preflight?.status !== 'passed' || (sandbox === 'nha-host' && receipt.nativeState?.ownership !== 'owned')) {
+                throw new Error('Runtime ownership receipt has no verified deployment attempt');
+              }
+              if (receipt.stages.cleanup?.status === 'running') receipt.stages.cleanup = { status: 'failed', reason: 'prior workflow step has ended' };
+              const env = { ...process.env, NEMOCLAW_GATEWAY_PORT: '8080', OPENSHELL_GATEWAY: 'nemoclaw', OPENSHELL_WORKSPACE: 'default' };
+              await cleanupSandbox(receipt, { deploy: true, gateway: 'nemoclaw', gatewayPort: 8080 }, (argv, options) => run(argv, { ...options, env, timeoutMs: Math.min(options.timeoutMs ?? 60000, 60000) }), { env });
+              await writeReportAtomically(target, receipt);
+              results.push({ ...receipt.stages.cleanup, resource: sandbox, gateway: receipt.gateway });
+            } catch (error) {
+              results.push({ resource: sandbox, status: 'failed', detail: error.message });
             }
-          } else {
-            results.push({ resource: 'legacy sandboxes', status: 'skipped', detail: 'OpenShell installation did not complete' });
           }
           if (fs.existsSync('reports/native.json')) {
             try {

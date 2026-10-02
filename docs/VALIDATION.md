@@ -132,6 +132,11 @@ The next review round found two more defects in the same runner, both fixed in `
 
 ## Qualification reliability verification — 2026-09-30
 
+This historical section and the evidence record's top-level source hashes describe
+commit [178d2fb](https://github.com/knowlet/NemoClaw-Harness-Template/commit/178d2fb9b24cec41a5da2abec779442411ab5986).
+Its test counts and log hashes are not evidence for later PR heads. The earlier native
+attempt retains separate nested source hashes; the bridge probe covers upstream bootstrap only.
+
 The usage detail guard now has HTTP-level regression coverage for both declared detail fields.
 Nulls, arrays, strings, numbers, and booleans are refused; empty objects, nested metadata, and
 provider extensions survive unchanged. Public declarations and their snapshots are unchanged.
@@ -171,7 +176,7 @@ a deterministic provider fixture, and isolated gateways on ports 18090/18091.
 | Existing default NemoClaw state | The four monitored default-state files were byte-identical before/after every live attempt |
 | Task-owned gateway and provider processes | Stopped; ports 18080, 18090, and 18091 had no listeners afterward |
 
-**This patch has not passed a complete live sandbox deployment.** The observed container-to-host
+**These historical local attempts did not pass a complete live sandbox deployment.** The observed container-to-host
 gateway connection failed on this host's isolated non-default ports; this does not establish a
 failure on the default port or in CI. No host firewall configuration was changed. The stopped
 `nha-reliable-diag` container and its recovery state were preserved after the native lifecycle
