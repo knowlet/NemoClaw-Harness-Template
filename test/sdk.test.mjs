@@ -208,7 +208,6 @@ test('client rejects every response field that violates the declared ChatRespons
     ['non-numeric usage entry', { choices: [valid], usage: { prompt_tokens: '3' } }],
     ['null known usage counter', { choices: [valid], usage: { total_tokens: null } }],
     ...['prompt_tokens_details', 'completion_tokens_details'].flatMap((field) => [
-      ['null', null],
       ['array', []],
       ['string', 'tokens'],
       ['number', 3],
@@ -233,6 +232,72 @@ test('client rejects every response field that violates the declared ChatRespons
       await assert.rejects(client.chat([{ role: 'user', content: 'x' }]), code('INVALID_RESPONSE'));
     });
   }
+});
+test('client normalizes nullable usage details while preserving the public object-only contract', async (t) => {
+  let response;
+  const baseUrl = await server(t, (_req, res) => res.end(JSON.stringify(response)));
+  const client = createInferenceClient({ model: 'm', baseUrl, development: true });
+  const variants = [
+    ['omitted', undefined],
+    ['null', null],
+    ['empty object', {}],
+    ['opaque object', {
+      provider_counter: 'provider-defined',
+      provider_extension: { buckets: [0, null, { enabled: true }], prompt_tokens_details: null },
+      nullable_extension: null,
+    }],
+  ];
+  for (const [promptLabel, prompt] of variants) {
+    for (const [completionLabel, completion] of variants) {
+      await t.test(`prompt: ${promptLabel}; completion: ${completionLabel}`, async () => {
+        const usage = {
+          prompt_tokens: 1, completion_tokens: 1, total_tokens: 2,
+          provider_extension: { prompt_tokens_details: null, completion_tokens_details: null },
+          nullable_extension: null,
+        };
+        response = {
+          id: 'nullable-usage-fixture',
+          choices: [{ index: 0, message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' }],
+          usage: {
+            ...usage,
+            ...(prompt === undefined ? {} : { prompt_tokens_details: prompt }),
+            ...(completion === undefined ? {} : { completion_tokens_details: completion }),
+          },
+          provider_extension: { region: 'fixture', nullable_extension: null },
+        };
+        const expectedUsage = {
+          ...usage,
+          ...(prompt == null ? {} : { prompt_tokens_details: prompt }),
+          ...(completion == null ? {} : { completion_tokens_details: completion }),
+        };
+        const actual = await client.chat([{ role: 'user', content: 'x' }]);
+        assert.deepEqual(actual, { ...response, usage: expectedUsage });
+        assert.equal(Object.hasOwn(actual.usage, 'prompt_tokens_details'), prompt != null);
+        assert.equal(Object.hasOwn(actual.usage, 'completion_tokens_details'), completion != null);
+      });
+    }
+  }
+});
+test('nullable usage details never hide invalid sibling fields or counters', async (t) => {
+  let response;
+  const baseUrl = await server(t, (_req, res) => res.end(JSON.stringify(response)));
+  const client = createInferenceClient({ model: 'm', baseUrl, development: true });
+  const nullDetails = { prompt_tokens_details: null, completion_tokens_details: null };
+  const cases = [
+    ...['prompt_tokens_details', 'completion_tokens_details'].flatMap((field) => [
+      ['array', []], ['string', 'tokens'], ['number', 3], ['boolean', false],
+    ].map(([label, value]) => [`${label} ${field}`, { ...nullDetails, [field]: value }])),
+    ...['prompt_tokens', 'completion_tokens', 'total_tokens'].map((field) =>
+      [`null ${field}`, { ...nullDetails, [field]: null }]),
+  ];
+  for (const [label, usage] of cases) {
+    await t.test(label, async () => {
+      response = { choices: [{ message: { role: 'assistant', content: 'OK' } }], usage };
+      await assert.rejects(client.chat([{ role: 'user', content: 'x' }]), code('INVALID_RESPONSE'));
+    });
+  }
+  response = { choices: [], usage: nullDetails };
+  await assert.rejects(client.chat([{ role: 'user', content: 'x' }]), code('INVALID_RESPONSE'));
 });
 test('client preserves empty and opaque usage detail objects for each declared field', async (t) => {
   let response;
