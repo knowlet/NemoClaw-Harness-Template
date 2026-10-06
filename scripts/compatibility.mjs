@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { classifySandboxPreflightResult } from './lib/sandbox-cleanup.mjs';
 import { NATIVE_CONTRACT, VERSION } from '../src/index.mjs';
+import { COMPLETE_HOME_CONTRACT, prepareCandidateManifest, loaderStage, qualifyCandidatePersistence } from './lib/candidate-manifest.mjs';
 import {
   cleanupOwnedCases,
   cleanupSandbox,
@@ -52,7 +53,7 @@ function usage() {
     'Usage:',
     '  node scripts/compatibility.mjs --checkout LABEL=PATH [--checkout LABEL=PATH ...] [--expected LABEL=SHA]',
     '    [--name NAME] [--json REPORT] [--sandbox-prefix PREFIX] [--sandbox-token TOKEN] [--gateway NAME]',
-    '    [--build] [--deploy]',
+    '    [--build] [--deploy] [--state-contract LABEL=complete-home-v1]',
     '',
     'A checkout with another revision is allowed only for qualification and is',
     'reported with supportedUpstream: false. --deploy also runs onboarding and',
@@ -62,13 +63,13 @@ function usage() {
 }
 
 function parse(args) {
-  const flags = { checkouts: [], expected: new Map() };
+  const flags = { checkouts: [], expected: new Map(), stateContracts: new Map() };
   for (let i = 0; i < args.length; i++) {
     const value = args[i];
     if (value === '--help') { flags.help = true; continue; }
     if (value === '--build') { flags.build = true; continue; }
     if (value === '--deploy') { flags.deploy = true; flags.build = true; continue; }
-    if (!['--checkout', '--expected', '--name', '--json', '--sandbox-prefix', '--sandbox-token', '--gateway'].includes(value)) {
+    if (!['--checkout', '--expected', '--state-contract', '--name', '--json', '--sandbox-prefix', '--sandbox-token', '--gateway'].includes(value)) {
       throw new Error('Unknown option: ' + value);
     }
     const next = args[++i];
@@ -86,6 +87,12 @@ function parse(args) {
       const revision = next.slice(separator + 1);
       if (!LABEL.test(label) || !SHA.test(revision)) throw new Error('Invalid expected revision: ' + next);
       flags.expected.set(label, revision);
+    } else if (value === '--state-contract') {
+      const [label, contract, extra] = next.split('=');
+      if (!LABEL.test(label ?? '') || label === 'pinned' || contract !== COMPLETE_HOME_CONTRACT || extra !== undefined || flags.stateContracts.has(label)) {
+        throw new Error('--state-contract requires a unique non-pinned LABEL=complete-home-v1');
+      }
+      flags.stateContracts.set(label, contract);
     } else if (value === '--name') flags.name = next;
     else if (value === '--json') flags.json = path.resolve(next);
     else if (value === '--sandbox-prefix') flags.sandboxPrefix = next;
@@ -104,6 +111,9 @@ function parse(args) {
   for (const item of flags.checkouts) {
     if (labels.has(item.label)) throw new Error('Duplicate checkout label: ' + item.label);
     labels.add(item.label);
+  }
+  for (const label of flags.stateContracts.keys()) {
+    if (!labels.has(label)) throw new Error('State contract has no matching checkout: ' + label);
   }
   for (const label of flags.expected.keys()) {
     if (!labels.has(label)) throw new Error('Expected revision has no matching checkout: ' + label);
@@ -287,14 +297,22 @@ async function qualify(result, flags, workspace, record, assertActive) {
     await sdk('scaffold', ['init', pack, '--name', name, '--display-name', 'Compatibility Echo', '--model', 'fixture-model']);
     result.stages.scaffold = { status: 'passed' };
   } catch (error) { return failStage(result, 'scaffold', result.stages.scaffold && result.stages.scaffold.status !== 'running' ? result.stages.scaffold : errorResult(error)); }
+  const stateContract = flags.stateContracts.get(item.label);
+  if (stateContract) {
+    const receipt = await phase('manifest', () => prepareCandidateManifest(pack, {
+      stateContract, revision: result.actualRevision, nativeContract: NATIVE_CONTRACT,
+    }));
+    result.manifestQualification = receipt;
+    result.stages.manifest = { status: 'passed', ...receipt };
+  }
   try {
     const installed = await sdk('install', ['install', pack, '--nemoclaw', item.checkout, '--replace', '--allow-unsupported-upstream']);
     result.stages.install = { status: 'passed', checkoutRevision: installed.checkoutRevision, supportedUpstream: installed.supportedUpstream };
   } catch (error) { return failStage(result, 'install', result.stages.install && result.stages.install.status !== 'running' ? result.stages.install : errorResult(error)); }
   try {
     const verification = await sdk('loader', ['verify', '--nemoclaw', item.checkout, '--name', name, '--allow-unsupported-upstream']);
-    result.stages.loader = { status: verification.loaderAccepted ? 'passed' : 'failed', category: verification.loaderAccepted ? undefined : 'product', loaderAccepted: verification.loaderAccepted, listed: verification.listed, workload: verification.workload, checkoutRevision: verification.checkoutRevision };
-    if (!verification.loaderAccepted) return failStage(result, 'loader', result.stages.loader);
+    result.stages.loader = loaderStage(verification);
+    if (result.stages.loader.status !== 'passed') return failStage(result, 'loader', result.stages.loader);
   } catch (error) { return failStage(result, 'loader', result.stages.loader && result.stages.loader.status !== 'running' ? result.stages.loader : errorResult(error)); }
 
   if (!flags.deploy) {
@@ -382,6 +400,7 @@ async function qualify(result, flags, workspace, record, assertActive) {
     result.failureClass = 'product';
     return result;
   }
+  if (stateContract && !await qualifyCandidatePersistence({ result, name, cli, execute, env: deployEnv(flags) })) return result;
   result.status = 'passed';
   return result;
 }

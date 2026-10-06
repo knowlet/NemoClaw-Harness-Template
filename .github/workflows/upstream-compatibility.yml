@@ -124,6 +124,7 @@ jobs:
           node scripts/compatibility.mjs \
             --checkout pinned=.upstream/NemoClaw-pinned \
             --checkout candidate=.upstream/NemoClaw-main \
+            --state-contract candidate=complete-home-v1 \
             --expected pinned=1ccec4e141b0a830229ef68c96639851d24810fd \
             --build \
             --deploy \
