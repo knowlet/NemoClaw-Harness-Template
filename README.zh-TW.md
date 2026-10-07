@@ -130,7 +130,7 @@ node bin/nha.mjs native verify --nemoclaw ../NemoClaw --name my-harness
 的部署（建置映像檔、建立 sandbox、在 sandbox 內執行任務）由 runtime workflow 記錄，不由這個指令
 推論。
 
-原生打包鎖定單一上游版本 `NVIDIA/NemoClaw@1eb370f20530bd1312ac86a27782ef8501b28ade`；這個
+原生打包鎖定單一上游版本 `NVIDIA/NemoClaw@1ccec4e141b0a830229ef68c96639851d24810fd`；這個
 `agents/` 版面是該版本的內部結構，不是 NVIDIA 公開的擴充 API。詳見[原生打包說明](docs/NATIVE.md)。
 
 ## DeepSeek 範例與限制

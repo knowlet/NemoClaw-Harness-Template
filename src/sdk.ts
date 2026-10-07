@@ -203,11 +203,24 @@ function isChatMessage(value: unknown): value is ChatMessage {
     && (value.tool_call_id === undefined || typeof value.tool_call_id === 'string');
 }
 
+/** Normalize only nullable wire detail containers; keep the public object-only usage contract. */
+function normalizeNullableUsageDetails(value: unknown): void {
+  if (!record(value) || !record(value.usage)) return;
+  // Providers such as vLLM serialize an unavailable breakdown as null. The
+  // response is freshly parsed JSON: omit just those fields before validation,
+  // without coercing counters, dropping invalid siblings, or walking metadata.
+  for (const key of ['prompt_tokens_details', 'completion_tokens_details']) {
+    if (value.usage[key] === null) delete value.usage[key];
+  }
+}
+
 /** Known scalar usage counters must be finite numbers; detail objects and other extensions stay opaque. */
 function isChatUsage(value: unknown): value is ChatUsage {
   if (!record(value)) return false;
   return ['prompt_tokens', 'completion_tokens', 'total_tokens'].every((key) =>
-    value[key] === undefined || (typeof value[key] === 'number' && Number.isFinite(value[key])));
+    value[key] === undefined || (typeof value[key] === 'number' && Number.isFinite(value[key])))
+    && ['prompt_tokens_details', 'completion_tokens_details'].every((key) =>
+      value[key] === undefined || record(value[key]));
 }
 
 /** Validate the declared response contract while retaining opaque content and extension fields. */
@@ -262,6 +275,7 @@ export function createInferenceClient({ model, baseUrl = INFERENCE_URL, developm
         let result: unknown;
         try { result = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
         catch { throw new AdapterError('INVALID_RESPONSE', 'Inference returned invalid JSON'); }
+        normalizeNullableUsageDetails(result);
         if (!isChatResponse(result)) throw new AdapterError('INVALID_RESPONSE', 'Inference did not return a valid Chat Completions response');
         return result;
       } catch (error) {

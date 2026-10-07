@@ -130,6 +130,64 @@ The next review round found two more defects in the same runner, both fixed in `
 | A `--gateway` that disagreed with `NEMOCLAW_GATEWAY_PORT` was accepted | NemoClaw derives its gateway from the port, so the ownership probe and the cleanup addressed one gateway while onboarding created the sandbox on another; the cleanup then reported an already-absent sandbox while the real one survived | The runner resolves one binding before any gateway command or build, refuses a missing port, an invalid port, or a `--gateway` that disagrees with it, passes the resolved port to onboarding, records gateway, port, and workspace beside the sandbox, and requires the sandbox to exist on the bound gateway after onboarding | Run [35609423419](https://github.com/knowlet/NemoClaw-Harness-Template/actions/runs/35609423419) reports `gateway: { name: "nemoclaw", port: 8080 }` and a passing `sandbox` stage for both cases |
 | Ownership reached disk only after the whole run | The report the workflow fallback reads was written at the end, so an interrupted runner left no receipt, and its detached onboarding child kept running | With `--json` the report is written atomically before onboarding starts and again after every stage; `SIGINT` and `SIGTERM` end the running command process group, delete the sandboxes this run owns within a bounded budget, keep `status: "interrupted"`, and exit 130 or 143 | The interrupt regression test stops the runner mid-onboarding and asserts the receipt, the cleanup, and that the child is gone |
 
+## Qualification reliability verification — 2026-09-30
+
+This historical section and the evidence record's top-level source hashes describe
+commit [178d2fb](https://github.com/knowlet/NemoClaw-Harness-Template/commit/178d2fb9b24cec41a5da2abec779442411ab5986).
+Its test counts and log hashes are not evidence for later PR heads. The earlier native
+attempt retains separate nested source hashes; the bridge probe covers upstream bootstrap only.
+
+The usage detail guard now has HTTP-level regression coverage for both declared detail fields.
+Nulls, arrays, strings, numbers, and booleans are refused; empty objects, nested metadata, and
+provider extensions survive unchanged. Public declarations and their snapshots are unchanged.
+
+Native integration, upstream compatibility, and quickstart share bounded command execution,
+credential redaction, gateway binding, native lifecycle ownership, and atomic evidence writing.
+Commands settle before interruption cleanup. Cleanup uses the native destroy command without
+`--force`, preserves upstream recovery refusals, and requires both remote absence and retired
+native state. A zero exit from destroy alone cannot pass the run. Failed runs capture bounded
+sandbox status and logs before cleanup. Each workflow uploads cleanup evidence and includes it
+in the final success gate.
+
+Local verification on Linux arm64 / Node 24.18.0: **`npm run check` passed all 287 tests, with
+zero failures or skips**. This includes strict TypeScript, the offline packed consumer, public
+declaration snapshots, ESM/CLI/scaffold checks, and classic/NodeNext consumers with
+`skipLibCheck=false`. Three focused checks also passed after the final recovery-authority and
+cleanup-deadline refinements. All three modified workflow YAML files parsed successfully.
+
+The regression matrix covers invalid HTTP response metadata; bounded and redacted output;
+SDK/loader descendant cancellation; failed report writes; timeout and signal handling; retained
+and pre-existing native state; same-name retry after verified cleanup; customization from V1 to
+V2; cleanup refusal and false-success responses; fixture readiness; and all cleanup gates.
+
+### Real Docker/OpenShell evidence
+
+The [sanitized evidence record](evidence/reliability-2026-09-30.json) includes source hashes,
+versions, durations, command outcomes, and retained-resource details. These runs used pinned
+NemoClaw `1eb370f20530bd1312ac86a27782ef8501b28ade`, OpenShell 0.0.116, Docker 29.2.1,
+a deterministic provider fixture, and isolated gateways on ports 18090/18091.
+
+| Check | Observed result |
+| --- | --- |
+| Real SDK install and pinned native loader | Passed |
+| Gateway bootstrap with its bridge probe skipped | Host status was connected, but onboarding failed after about 80 seconds; the sandbox exited after five unsuccessful policy-fetch attempts |
+| Failure evidence and native cleanup | Sandbox status and logs were saved. Native cleanup refused ambiguous retained recovery authority, and the runner reported failure without raw deletion or `--force` |
+| Bootstrap with the normal bridge probe enabled | Failed in 8.468 seconds with `tcp_failed`, before onboarding or another sandbox creation |
+| Existing default NemoClaw state | The four monitored default-state files were byte-identical before/after every live attempt |
+| Task-owned gateway and provider processes | Stopped; ports 18080, 18090, and 18091 had no listeners afterward |
+
+**These historical local attempts did not pass a complete live sandbox deployment.** The observed container-to-host
+gateway connection failed on this host's isolated non-default ports; this does not establish a
+failure on the default port or in CI. No host firewall configuration was changed. The stopped
+`nha-reliable-diag` container and its recovery state were preserved after the native lifecycle
+refusal. An earlier attempt's already-absent `nha-reliable-live` sandbox also left recovery state;
+that discovery motivated the lifecycle cleanup change. Exact identifiers are in the evidence
+record. Neither retained state nor a failed cleanup is represented as success.
+
+The verified improvement is earlier failure detection, durable diagnosis, protected existing
+state, and success gates that include verified cleanup. Real-model, native effective-policy,
+and cross-architecture qualification remain separate work.
+
 ## Limits
 
 No real-model quality benchmark, DeepSeek runtime boot, dual-architecture qualification, GPU inference, or lifecycle/snapshot/restore test is claimed. Native packaging registers one agent for one pinned NemoClaw revision; other NemoClaw-managed operations (snapshots, recovery, lifecycle verbs) remain unimplemented. Filesystem and egress security are established only for explicit assertions that actually passed, not by an SDK status flag.
