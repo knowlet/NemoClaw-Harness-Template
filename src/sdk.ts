@@ -151,18 +151,32 @@ export async function runHarness(input: AdapterManifest, task: string, options: 
     let failure: AdapterError | undefined;
     let size = 0;
     let settled = false;
+    let settleTimer: ReturnType<typeof setTimeout> | undefined;
     const stdout: Buffer[] = [], stderr: Buffer[] = [];
     const kill = () => {
       if (!child.pid) return;
       try { if (process.platform !== 'win32') process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch { /* Already reaped. */ }
     };
-    const stop = (code: string, message: string) => { failure ??= new AdapterError(code, message); kill(); };
+    const stop = (code: string, message: string) => {
+      if (settled || failure) return;
+      failure = new AdapterError(code, message);
+      kill();
+      // A detached descendant can retain the pipes after the process group
+      // dies. Do not depend on 'close' to finish an already failed invocation.
+      settleTimer = setTimeout(() => {
+        if (settled) return;
+        settled = true; cleanup();
+        child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy();
+        reject(failure);
+      }, 250);
+    };
     const abort = () => stop('ABORTED', 'Harness invocation aborted');
     const timer = setTimeout(() => stop('TIMEOUT', 'Harness exceeded its execution deadline'), adapter.runtime.timeoutMs);
-    const cleanup = () => { clearTimeout(timer); options.signal?.removeEventListener('abort', abort); };
+    const cleanup = () => { clearTimeout(timer); clearTimeout(settleTimer); options.signal?.removeEventListener('abort', abort); };
     options.signal?.addEventListener('abort', abort, { once: true });
     if (options.signal?.aborted) abort();
     const collect = (target: Buffer[]) => (chunk: Buffer) => {
+      if (settled || failure) return;
       size += chunk.length;
       if (size > adapter.runtime.maxOutputBytes) stop('OUTPUT_LIMIT', 'Harness exceeded its combined stdout/stderr limit');
       else target.push(chunk);
